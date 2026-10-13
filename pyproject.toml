@@ -1,13 +1,16 @@
 [project]
 name = "bitongue"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bitongue - A message flowing noting library."
 readme = "README.md"
 authors = [
     { name = "Ahsen17", email = "mesailedward@qq.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "anyio",
+    "msgspec",
+]
 
 [project.urls]
 Homepage = "https://ahsen17.github.io/bitongue"
@@ -206,11 +209,8 @@ enable_error_code = [
 show_error_codes = true
 pretty = true
 
-# APScheduler ships neither stubs nor a `py.typed` marker. Its surface is small
-# and exercised by the client tests, so it is not worth tracking down stubs.
-[[tool.mypy.overrides]]
-module = ["apscheduler.*"]
-ignore_missing_imports = true
+[tool.pyright]
+extraPaths = ["."]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib", "--asyncio-mode=auto"]
