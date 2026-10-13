@@ -1,0 +1,79 @@
+# Architecture and data flow
+
+This page explains Bitongue from two angles: the static structure and the runtime behavior.
+
+## Subpackage structure
+
+The library is organized into five subpackages with bottom-up dependencies: `base` depends on nothing internal, and `client` orchestrates all the others:
+
+```{mermaid}
+graph BT
+    base["base<br/>BaseStruct · exception hierarchy"]
+    flow["flow<br/>Flowing · BaseMessage · MessageEntry"]
+    filter["filter<br/>BaseFilter"]
+    handler["handler<br/>BaseHandler · BaseResult"]
+    client["client<br/>Bitongue · BitongueConfig"]
+
+    flow --> base
+    filter --> flow
+    handler --> base
+    client --> flow
+    client --> handler
+    client --> filter
+```
+
+| Subpackage | Responsibility | Main public objects |
+|-|-|-|
+| `base` | Data-structure foundation and exception root | `BaseStruct`, `BitongueError` and its subclasses |
+| `flow` | In-memory flowing window: buffering, timing, expiry removal | `Flowing`, `BaseMessage`, `MessageEntry` |
+| `filter` | Message admission gate (Protocol) | `BaseFilter` |
+| `handler` | Business handling extension point (Protocol) and result base | `BaseHandler`, `BaseResult` |
+| `client` | Lifecycle orchestration and both production/consumption ends | `Bitongue`, `BitongueConfig` |
+
+## The life of a message
+
+From send to result, a message passes through these stages:
+
+```{mermaid}
+sequenceDiagram
+    participant P as Producer
+    participant B as Bitongue
+    participant F as Flowing window
+    participant C as Consumer result()
+    participant FC as Filter chain
+    participant H as Handler
+
+    P->>B: send(message)
+    B->>F: draw() wraps it into a MessageEntry (records enter_time and timeout)
+    F->>F: bounded buffer (sender waits when full)
+    C->>F: flow() draws entries in order
+    F-->>C: entries past their lifetime are dropped as expired
+    C->>FC: calls filter(message) one by one
+    FC-->>C: all passed? otherwise the message is dropped silently
+    C->>H: handle(message) (bounded by handle_timeout)
+    H-->>C: returns result R
+    C-->>P: yields the result
+```
+
+The key points, mapped to the code:
+
+- **The clock starts at entry**: `send()` records `enter_time` immediately, so time spent waiting in the buffer counts against the lifetime.
+- **Expiry is enforced on the consumer side**: an expired entry is discovered and skipped when drawn — nothing is produced, nothing raises.
+- **The filter chain does not short-circuit**: every filter runs; a single rejection drops the message.
+- **Handling timeouts are local**: a per-message timeout only affects that message (it is skipped); the generator keeps consuming.
+- **Handling exceptions propagate**: exceptions raised by the handler are wrapped as `MessageHandleError` and received by whoever iterates `result()`.
+
+## Concurrency model
+
+- All async primitives come from anyio, so the library runs on asyncio as well as trio;
+- The flowing window is a bounded memory stream: a full buffer makes `send()` wait (backpressure), an empty one makes `result()` wait;
+- `result()`'s underlying stream is single-consumer; exactly one task should iterate it at a time;
+- `handle_timeout` is implemented with an anyio cancel scope, so a timeout actually cancels the work inside the handler rather than merely abandoning the wait.
+
+## Design trade-offs
+
+- **msgspec instead of dataclass/pydantic**: messages and results need high-frequency serialization; `BaseStruct` provides one consistent surface with sorted-key JSON and typed conversion.
+- **Protocols instead of inheritance**: filters and handlers only need "a method with the right signature"; business classes do not inherit any framework base class.
+- **Lifecycle centralized in the orchestrator**: `Flowing` can be used standalone, but starting/stopping, timeout configuration, and filter/handler orchestration all converge in `Bitongue` so users cannot assemble the pieces incorrectly.
+
+For the concrete semantics of each configuration field, see [Configuration](configuration.md).
