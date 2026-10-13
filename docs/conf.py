@@ -22,6 +22,7 @@ extensions = [
     "sphinxext.opengraph",
     "sphinx_tippy",
     "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
 ]
 
 html_theme = "shibuya"

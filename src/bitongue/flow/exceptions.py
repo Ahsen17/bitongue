@@ -1,3 +1,5 @@
+"""Exceptions raised by the flowing window and its handler registry."""
+
 from bitongue.base import BitongueError
 
 __all__ = (
@@ -8,12 +10,17 @@ __all__ = (
 
 
 class HandlerDuplicateError(BitongueError):
-    """Exception raised when a duplicate handler is found in the flow."""
+    """Raised when a handler is registered twice for the same kind."""
 
 
 class HandlerNotFoundError(BitongueError):
-    """Exception raised when a handler is not found in the flow."""
+    """Raised when no handler is registered for the requested kind."""
 
 
 class FlowingNotInitializedError(BitongueError):
-    """Exception raised when the flow is not initialized."""
+    """Raised when the window is used before it is started.
+
+    :meth:`bitongue.flow.Flowing.draw` and
+    :meth:`bitongue.flow.Flowing.flow` both require a started window; this
+    error reports operating it while stopped.
+    """
