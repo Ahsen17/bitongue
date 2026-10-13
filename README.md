@@ -1,0 +1,172 @@
+<div align="center">
+
+# Bitongue
+
+基于 anyio 与 msgspec 的异步消息流处理库
+
+[中文] **·** [English](README_en.md)
+
+[![Tests](https://github.com/Ahsen17/bitongue/actions/workflows/pytest.yml/badge.svg)](https://github.com/Ahsen17/bitongue/actions/workflows/pytest.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](pyproject.toml)
+
+</div>
+
+---
+
+## 目录
+
+[简介](#简介) **·** [特性](#特性) **·** [安装](#安装) **·** [快速上手](#快速上手) **·** [架构](#架构) **·** [开发](#开发) **·** [文档](#文档) **·** [贡献](#贡献) **·** [许可证](#许可证)
+
+## 简介
+
+Bitongue - A message flowing noting library.
+
+Bitongue 是一个异步消息流处理库：生产者把消息投入内存流窗口，消费者按序取出、
+过滤后交给处理器，产出结果。消息与结果均为 [msgspec](https://jcristharif.com/msgspec/)
+结构体，异步原语来自 [anyio](https://anyio.readthedocs.io/) —— 流窗口负责缓冲与
+存活控制，过滤器链负责准入，处理器负责业务逻辑，三者可独立演化。
+
+## 特性
+
+- **内存消息流窗口**：基于 anyio 内存流的有界缓冲，窗口容量与消息存活时间可配置，
+  过期消息在消费时自动剔除，被拒绝或过期的消息不阻塞后续消费
+- **过滤器链准入**：消息进入处理前依次通过过滤器链，全部通过才放行，
+  被拒绝的消息静默丢弃
+- **处理器扩展点**：实现一个异步 `handle(message) -> result` 方法即可接入业务逻辑，
+  消息流转机制与业务处理解耦
+- **双层超时保护**：流窗口超时控制消息存活，处理超时限制单条消息的处理耗时
+  （超时会真正取消处理中的执行），超时消息被跳过而不阻塞后续消息
+- **类型安全的数据结构**：消息与结果均为 msgspec 结构体，自带字典与 JSON 序列化，
+  泛型参数贯穿发送到结果的全流程
+- **极简依赖**：运行时仅依赖 anyio 与 msgspec，不引入更重的框架
+
+## 安装
+
+```bash
+# uv
+uv add bitongue
+
+# pip
+pip install bitongue
+```
+
+要求 Python ≥ 3.12。如果该包尚未发布到 PyPI，可以直接从源码安装：
+
+```bash
+uv add git+https://github.com/Ahsen17/bitongue.git
+```
+
+## 快速上手
+
+定义一个过滤器（丢弃空文本）和一个处理器（转大写），发送两条消息并消费结果：
+
+```python
+import anyio
+
+from bitongue.client import Bitongue, BitongueConfig
+from bitongue.filter import BaseFilter
+from bitongue.flow import BaseMessage
+from bitongue.handler import BaseHandler, BaseResult
+
+
+class UpperResult(BaseResult):
+    """处理结果：大写文本。"""
+
+    text: str
+
+
+class NonEmptyFilter(BaseFilter[BaseMessage]):
+    """过滤器：丢弃空文本消息。"""
+
+    async def filter(self, message: BaseMessage) -> bool:
+        return bool(message.text)
+
+
+class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
+    """处理器：把文本转成大写。"""
+
+    async def handle(self, message: BaseMessage) -> UpperResult:
+        return UpperResult(text=(message.text or "").upper())
+
+
+async def main() -> None:
+    config = BitongueConfig(
+        flowing_size=16,       # 流窗口容量（有界缓冲大小）
+        flowing_timeout=30,    # 消息在窗口内的存活秒数
+        handle_timeout=5.0,    # 单条消息的处理超时秒数
+        handle_concurrency=1,  # 处理并发（预留字段）
+    )
+    client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
+
+    await client.start()
+    await client.send(BaseMessage(type="text", text="hello bitongue"))
+    await client.send(BaseMessage(type="text", text=""))  # 会被过滤器丢弃
+
+    async for result in client.result():
+        print(result.text)  # HELLO BITONGUE
+        break  # 示例到此结束；真实场景可按需持续消费
+
+    await client.shutdown()
+
+
+if __name__ == "__main__":
+    anyio.run(main)
+```
+
+运行输出：
+
+```text
+HELLO BITONGUE
+```
+
+逐步讲解见文档站的[快速上手](https://ahsen17.github.io/bitongue/guide/quickstart.html)。
+
+## 架构
+
+```mermaid
+flowchart LR
+    P[生产者] -->|send| W[流窗口 Flowing<br>有界缓冲 + 存活计时]
+    W -->|按序取出| D{过期剔除}
+    D -->|过期| X[静默丢弃]
+    D --> F[过滤器链<br>全部通过才放行]
+    F -->|拒绝| X
+    F --> H[处理器<br>handle_timeout 限时]
+    H -->|yield 结果| C[消费者 result]
+```
+
+- **生产侧**：`Bitongue.send()` 把消息包装成条目（记录入库时刻与存活时间）投入
+  有界缓冲；窗口满时发送方等待，形成背压。
+- **消费侧**：`Bitongue.result()` 按序取出条目，先剔除入库后超过存活时间的过期消息；
+  过滤链全部通过的消息交给处理器，处理耗时受 `handle_timeout` 约束，超时消息被跳过；
+  处理器异常包装为 `MessageHandleError` 向消费者传播。
+
+完整结构与一条消息的生命周期见[架构与数据流](https://ahsen17.github.io/bitongue/guide/architecture.html)。
+
+## 开发
+
+```bash
+make install    # 初始化虚拟环境并安装依赖
+make check      # lint + 类型检查 + 全部测试
+make coverage   # 覆盖率报告（fail_under = 80）
+make docs-build # 构建双语文档站
+```
+
+提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)，
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 文档
+
+完整的双语文档站点（快速上手、核心概念、架构与数据流、配置说明）：
+
+- 简体中文：<https://ahsen17.github.io/bitongue/>
+- English: <https://ahsen17.github.io/bitongue/en/>
+
+## 贡献
+
+欢迎通过 issue 反馈问题、通过 PR 提交改动。本项目接受 AI 辅助编程贡献，
+但贡献者需对提交的代码负全责 —— 详见[贡献指南](CONTRIBUTING.md)。
+
+## 许可证
+
+[AGPL-3.0](LICENSE)
