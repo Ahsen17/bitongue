@@ -1,5 +1,5 @@
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 import anyio
@@ -8,7 +8,7 @@ from .exceptions import FlowingNotInitializedError
 from .schemas import BaseMessage, MessageEntry
 
 if TYPE_CHECKING:
-    from anyio._core._streams import (  # type: ignore
+    from anyio.streams.memory import (
         MemoryObjectReceiveStream,
         MemoryObjectSendStream,
     )
@@ -67,7 +67,7 @@ class Flowing[T: BaseMessage]:
 
         self._running = False
 
-    async def draw(self, message: T) -> None:
+    async def draw(self, message: "T") -> None:
 
         if not self._running or self._sender is None:
             raise FlowingNotInitializedError(
@@ -82,7 +82,7 @@ class Flowing[T: BaseMessage]:
             ),
         )
 
-    async def flow(self) -> AsyncIterator[T]:
+    async def flow(self) -> AsyncGenerator["T", None]:
 
         if not self._running or self._receiver is None:
             raise FlowingNotInitializedError(

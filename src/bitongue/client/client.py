@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, Collection
 from typing import TYPE_CHECKING
 
 import anyio
@@ -23,7 +23,7 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
         config: "BitongueConfig",
         *,
         handler: "BaseHandler[T, R]",
-        filters: Iterable["BaseFilter[T]"] | None = None,
+        filters: Collection["BaseFilter[T]"] | None = None,
     ) -> None:
 
         self._config = config
@@ -58,7 +58,7 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
 
         await self._flow.draw(message)
 
-    async def result(self) -> AsyncIterator["R"]:
+    async def result(self) -> AsyncGenerator["R", None]:
 
         if self._flow is None or not self._flow.running:
             raise RuntimeError("Run `start` first.")

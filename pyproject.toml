@@ -209,6 +209,9 @@ enable_error_code = [
 show_error_codes = true
 pretty = true
 
+[tool.pyright]
+extraPaths = ["."]
+
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib", "--asyncio-mode=auto"]
 # `import-mode=importlib` makes test packages importable through `sys.modules`

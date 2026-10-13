@@ -1,0 +1,276 @@
+"""Tests for bitongue.client.client."""
+
+import anyio
+import pytest
+from tests.client.conftest import (
+    CollectResults,
+    EchoResult,
+    MakeClient,
+    MakeFilter,
+    MakeHandler,
+)
+from tests.conftest import MakeMessage, WaitUntil
+
+from bitongue.client import MessageHandleError
+
+
+class TestFilterChain:
+    """审计 A1 回归:任一过滤器拒绝的消息不得到达 handler。"""
+
+    async def test_rejected_message_never_reaches_handler(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_filter: MakeFilter,
+        make_message: MakeMessage,
+        wait_until: WaitUntil,
+    ) -> None:
+        reject_all = make_filter(False)
+        permit_all = make_filter(True)
+        handler = make_handler()
+        client = make_client(handler=handler, filters=[reject_all, permit_all])
+        await client.start()
+        await client.send(make_message("m1"))
+
+        async with anyio.create_task_group() as tg:
+
+            async def drain() -> None:
+                async for _ in client.result():
+                    pass  # 被拒消息不产生结果
+
+            tg.start_soon(drain)
+            await wait_until(lambda: len(reject_all.seen) == 1)
+            tg.cancel_scope.cancel()
+
+        await client.shutdown()
+        assert permit_all.seen  # 现状:过滤器链不短路,全部执行
+        assert handler.seen == []
+
+    async def test_all_messages_rejected_when_any_filter_rejects(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_filter: MakeFilter,
+        make_message: MakeMessage,
+        wait_until: WaitUntil,
+    ) -> None:
+        reject_all = make_filter(False)
+        handler = make_handler()
+        client = make_client(handler=handler, filters=[reject_all])
+        await client.start()
+        await client.send(make_message("m1"))
+        await client.send(make_message("m2"))
+
+        async with anyio.create_task_group() as tg:
+
+            async def drain() -> None:
+                async for _ in client.result():
+                    pass  # 被拒消息不产生结果
+
+            tg.start_soon(drain)
+            await wait_until(lambda: len(reject_all.seen) == 2)
+            tg.cancel_scope.cancel()
+
+        await client.shutdown()
+        assert handler.seen == []
+
+    async def test_accepted_message_reaches_handler(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_filter: MakeFilter,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        permit_all = make_filter(True)
+        handler = make_handler()
+        client = make_client(handler=handler, filters=[permit_all])
+        await client.start()
+        message = make_message("pass")
+        await client.send(message)
+
+        results = await collect_results(client, count=1)
+
+        await client.shutdown()
+        assert [item.content for item in results] == ["pass"]
+        assert handler.seen == [message]
+
+    async def test_without_filters_every_message_reaches_handler(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        handler = make_handler()
+        client = make_client(handler=handler)
+        await client.start()
+        await client.send(make_message("m1"))
+        await client.send(make_message("m2"))
+
+        results = await collect_results(client, count=2)
+
+        await client.shutdown()
+        assert [item.content for item in results] == ["m1", "m2"]
+
+
+class TestHandleTimeout:
+    """审计 A3 回归:超时跳过消息但不断流;慢消费者不被误取消。"""
+
+    async def test_timeout_skips_message_and_keeps_stream_alive(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        handler = make_handler(delays=[0.3, 0.0])
+        client = make_client(handler=handler, handle_timeout=0.1)
+        await client.start()
+        await client.send(make_message("slow"))
+        await client.send(make_message("fast"))
+
+        results = await collect_results(client, count=1)
+
+        await client.shutdown()
+        assert [item.content for item in results] == ["fast"]
+        assert len(handler.seen) == 2  # 慢消息进入了 handle,但被超时剔除
+
+    async def test_slow_consumer_is_not_cancelled_between_results(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_message: MakeMessage,
+        wait_until: WaitUntil,
+    ) -> None:
+        # 修复前:超时作用域跨越 yield,消费者在两次取结果之间的耗时计入
+        # handle_timeout,导致消费者任务被误取消。本用例钉住修复后的行为。
+        handler = make_handler()
+        client = make_client(handler=handler, handle_timeout=0.1)
+        await client.start()
+        for i in range(3):
+            await client.send(make_message(f"m{i}"))
+
+        results: list[EchoResult] = []
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as tg:
+
+                async def drain() -> None:
+                    async for item in client.result():
+                        results.append(item)
+                        await anyio.sleep(0.3)  # 每条结果取用耗时 > handle_timeout
+
+                tg.start_soon(drain)
+                await wait_until(lambda: len(results) == 3)
+                tg.cancel_scope.cancel()
+
+        assert [item.content for item in results] == ["m0", "m1", "m2"]
+        await client.shutdown()
+
+
+class TestHandlerError:
+    """特征测试(审计 B3 现状):handler 异常包装为 MessageHandleError 且整个结果流终止。"""
+
+    async def test_handler_error_terminates_stream_with_message_handle_error(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_message: MakeMessage,
+    ) -> None:
+        handler = make_handler(error=ValueError("boom"))
+        client = make_client(handler=handler)
+        await client.start()
+        await client.send(make_message("m1"))
+        await client.send(make_message("m2"))
+
+        consumed: list[EchoResult] = []
+        with pytest.raises(MessageHandleError) as excinfo:
+            async for item in client.result():
+                consumed.append(item)  # noqa: PERF401 -- 流应在此处终止
+
+        assert excinfo.type is MessageHandleError
+        assert isinstance(excinfo.value.__cause__, ValueError)
+        assert consumed == []  # 流在第一条消息处终止,第二条未被处理
+        await client.shutdown()
+
+
+class TestClientLifecycle:
+    """start / shutdown / 未初始化守卫。"""
+
+    async def test_send_before_start_raises_runtime_error(
+        self, make_client: MakeClient, make_message: MakeMessage
+    ) -> None:
+        client = make_client()
+
+        with pytest.raises(RuntimeError, match=r"Run `start` first\."):
+            await client.send(make_message())
+
+    async def test_result_before_start_raises_runtime_error(
+        self, make_client: MakeClient
+    ) -> None:
+        client = make_client()
+        gen = client.result()
+
+        with pytest.raises(RuntimeError, match=r"Run `start` first\."):
+            await gen.__anext__()
+
+    async def test_shutdown_without_start_is_noop(self, make_client: MakeClient) -> None:
+        client = make_client()
+
+        await client.shutdown()
+
+    async def test_double_start_keeps_client_usable(
+        self,
+        make_client: MakeClient,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        client = make_client()
+        await client.start()
+
+        await client.start()
+        await client.send(make_message("m"))
+        results = await collect_results(client, count=1)
+
+        await client.shutdown()
+        assert len(results) == 1
+
+    async def test_restart_after_shutdown_accepts_messages(
+        self,
+        make_client: MakeClient,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        client = make_client()
+        await client.start()
+        await client.shutdown()
+
+        await client.start()
+        await client.send(make_message("again"))
+        results = await collect_results(client, count=1)
+
+        await client.shutdown()
+        assert [item.content for item in results] == ["again"]
+
+
+class TestConcurrentConsumers:
+    """特征测试(审计 B7 现状):多个 result() 消费者瓜分消息流(各得其一、无重复)。"""
+
+    async def test_consumers_split_messages_without_duplicates(
+        self, make_client: MakeClient, make_message: MakeMessage
+    ) -> None:
+        client = make_client()
+        await client.start()
+        for text in ("a", "b", "c", "d"):
+            await client.send(make_message(text))
+
+        first = client.result()
+        second = client.result()
+        got_first = [await first.__anext__() for _ in range(2)]
+        got_second = [await second.__anext__() for _ in range(2)]
+
+        contents = sorted(item.content for item in got_first + got_second)
+        assert contents == ["a", "b", "c", "d"]
+        await first.aclose()
+        await second.aclose()
+        await client.shutdown()
