@@ -33,6 +33,70 @@ Return `True` to release the message, `False` to reject it. Key points:
 - The filter chain **does not short-circuit**: even if the first filter already rejected the message, the remaining filters still run. Filters should therefore be read-only, side-effect-free predicates.
 - With no filters configured, every message passes.
 
+## Built-in filters
+
+Besides your own Protocol implementations, `bitongue.filter` ships two
+ready-to-use filters. They share the same `True`/`False` contract but take
+opposite admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
+rejects), and `SparseFilter` is **duplicate interception** (similarity to the
+corpus rejects).
+
+### `KeywordsFilter` — keyword blocklist
+
+Multi-keyword matching on an Aho-Corasick automaton:
+
+- **A hit rejects**: any keyword found in the text → reject; no hit → release;
+- **Normalized matching**: keywords and message text both go through the
+  `Normalizer` (casefold, non-word runs folded to spaces, NFKC), so case and
+  punctuation differences cannot hide a hit;
+- **Substring semantics**: a keyword firing as a fragment of the text counts
+  as a hit (Aho-Corasick matches substrings);
+- **Boundary behavior**: messages without a text payload are released (nothing
+  to match); with an empty keyword list nothing can be intercepted, so every
+  message is released;
+- The keyword list may come from a list or `load_from_file` (line by line,
+  UTF-8, blank lines ignored); both construction paths behave identically.
+  The automaton is built eagerly in the constructor — `filter` is a pure
+  lookup with no first-call cost.
+
+### `SparseFilter` — duplicate interception via sparse retrieval
+
+The reference corpus is embedded into a qdrant sparse collection (BM25
+term-frequency weights with IDF modification); each message is embedded as a
+binary query vector and searched against it:
+
+- **Similarity rejects**: a message whose similarity to the corpus exceeds
+  `filter_threshold` (default 0.8) → reject; unrelated → release; no text
+  payload → release;
+- **Similarity mapping**: `similarity = scale·score / (1 + scale·score)`
+  (`normalize_scale` default 5), monotonically increasing in the BM25 score,
+  with a zero score (no overlap) mapping to zero. **The threshold semantics
+  run sensitive: under the defaults, even a single token overlapping the
+  corpus can push the BM25 score past 0.8 and trigger interception**; for a
+  looser gate raise `filter_threshold` (e.g. 0.9+) or lower `normalize_scale`
+  (e.g. 2.0);
+- **Deduplicated seeding**: each corpus string is addressed by the UUID5 of
+  its own text, so re-seeding overwrites existing points instead of stacking
+  copies; corpus documents that normalize to no usable token are skipped;
+- **Lifecycle**: initialization includes building the embedding and a full
+  corpus upsert, which is comparatively expensive, so the class implements
+  `FilterLifecycle` (`start()` / `aclose()`): handed to a `Bitongue`
+  orchestrator, `client.start()` initializes it and `shutdown()` releases the
+  connection; standalone, the first `filter` call lazily initializes (lock
+  protected, a one-time cost inside the caller's timeout budget);
+- **Configuration**: `Bm25Policy` (`language="chinese"` selects the local
+  `Bm25CN` implementation — no download, no network; any other language
+  selects fastembed's `Bm25`, which requires `model_name` and downloads the
+  model on first use) and `QdrantPolicy` (connection settings whose field
+  names mirror the qdrant-client constructor; `location` / `url` / `host` /
+  `path` are mutually exclusive — in-memory mode uses `location=":memory:"`
+  with `host=None`);
+- **Corpus chunking is the caller's responsibility**: each string is one
+  searchable unit.
+
+The supporting tools `Normalizer` (text normalization) and `JiebaTokenizer`
+(Chinese search-mode segmentation) are also usable on their own.
+
 ## Handlers and results (`BaseHandler` / `BaseResult`)
 
 `BaseHandler[T, R]` is the business-logic extension point, also a Protocol, with one async method:

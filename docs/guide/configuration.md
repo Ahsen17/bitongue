@@ -66,3 +66,27 @@ config = BitongueConfig(
 ```
 
 该组合的含义：最坏情况下，一条消息从入库到被处理完成不会超过约 12 秒；过期或超时的消息都不会阻塞后续消息的消费。
+
+## 过滤器配置（`SparseFilter`）
+
+`SparseFilter` 的行为由构造参数与两个 policy 结构体描述（完整字段见
+[API 参考](../api)中对应模块；此处列出调参最常触及的部分）：
+
+| 参数 / 字段 | 默认 | 语义 |
+|-|-|-|
+| `filter_threshold` | `0.8` | 判重阈值：相似度超过它即拒绝；取值为 (0, 1) 开区间 |
+| `normalize_scale` | `5.0` | 相似度饱和速率；越大则越低的 BM25 分就会被视为高相似（更敏感） |
+| `Bm25Policy.language` | `"chinese"` | 中文走本地 `Bm25CN` 实现（零下载零联网）；其他语言走 fastembed `Bm25` |
+| `Bm25Policy.model_name` | `""` | 非中文语言必填（空串视为未设置，启动时明确报错）；中文路径忽略 |
+| `Bm25Policy.k` / `b` / `avg_len` | `1.2` / `0.75` / `256.0` | BM25 公式参数（词频饱和、长度归一、平均文档长度） |
+| `QdrantPolicy.location` / `url` / `host` / `path` | `host="localhost"` | 连接目标，**四者互斥**（qdrant-client 校验）；内存模式用 `location=":memory:"` 且 `host=None` |
+| `QdrantPolicy.port` / `grpc_port` | `6333` / `6334` | host 模式的 REST / gRPC 端口 |
+
+阈值与 scale 的调参直觉：默认组合下「相似度 > 0.8」等价于「BM25 分 > 0.8」——
+**消息与语料哪怕只有一个词元重叠也可能触发拦截**（语料越大、该词元 IDF 越低时
+越难触发；小语料场景则容易）。要减少误拦：提高 `filter_threshold`（如 0.9+）或
+调低 `normalize_scale`（如 2.0）；要更激进地拦截近重复则反向调整。
+
+非中文嵌入模型首次使用时从 HuggingFace 下载，可用 `Bm25Policy.cache_dir` 或
+环境变量 `FASTEMBED_CACHE_PATH` 控制缓存位置；`KeywordsFilter` 无网络行为，
+无需配置。

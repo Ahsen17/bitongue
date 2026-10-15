@@ -85,6 +85,7 @@ CHANGELOG.md is generated automatically from commit history by [git-cliff](https
 - Test cases are organized in `class TestXX` groups;
 - pytest runs in asyncio auto mode, so tests are plain `async def` functions;
 - External dependency strategy: unit tests use fakexx packages (e.g. fakeredis); dependencies without a fakexx package use async mocks; integration tests (`test_integration/`, marker `integration`) use real services;
+- Integration tests reach qdrant through the environment: `BITONGUE_TEST_QDRANT_URL` (full URL) or `BITONGUE_TEST_QDRANT_HOST` / `BITONGUE_TEST_QDRANT_PORT` (default `localhost:6333`); when the service is unreachable the tests skip automatically instead of failing;
 - New features must come with tests; coverage must stay at or above 80%.
 
 ## Release process (maintainers)
