@@ -15,7 +15,7 @@ import pytest
 from qdrant_client import AsyncQdrantClient
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter import QdrantPolicy, SparseFilter
+from bitongue.filter.sparse import QdrantPolicy, SparseFilter
 from bitongue.flow import BaseMessage
 from test_integration.conftest import (
     CollectResults,

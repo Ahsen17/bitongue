@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from bitongue.filter import QdrantPolicy, SparseFilter
+from bitongue.filter.sparse import QdrantPolicy, SparseFilter
 from bitongue.flow import BaseMessage
 
 type MakeSparseFilter = Callable[..., SparseFilter[BaseMessage]]

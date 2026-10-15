@@ -13,7 +13,7 @@ from tests.conftest import MakeMessage
 from tests.filter.sparse.conftest import MakeSparseFilter
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter import Bm25Policy, QdrantPolicy, SparseFilter
+from bitongue.filter.sparse import Bm25Policy, QdrantPolicy, SparseFilter
 from bitongue.flow import BaseMessage
 from bitongue.handler import BaseHandler, BaseResult
 

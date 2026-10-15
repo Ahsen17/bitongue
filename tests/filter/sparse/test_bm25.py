@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 
-from bitongue.filter import Bm25CN
+from bitongue.filter.sparse import Bm25CN
 from bitongue.filter.sparse.bm25 import Bm25CNWorker
 
 

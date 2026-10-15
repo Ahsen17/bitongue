@@ -21,7 +21,9 @@ from fastembed.sparse.sparse_embedding_base import (
     SparseTextEmbeddingBase,
 )
 
-from bitongue.filter.utils import JiebaTokenizer, Normalizer
+from bitongue.filter.utils import Normalizer
+
+from .tokenizer import JiebaTokenizer
 
 if TYPE_CHECKING:
     from pathlib import Path
