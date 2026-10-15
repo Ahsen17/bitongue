@@ -10,7 +10,7 @@ The library is organized into five subpackages with bottom-up dependencies: `bas
 graph BT
     base["base<br/>BaseStruct · exception hierarchy"]
     flow["flow<br/>Flowing · BaseMessage · MessageEntry"]
-    filter["filter<br/>BaseFilter"]
+    filter["filter<br/>BaseFilter · KeywordsFilter · SparseFilter"]
     handler["handler<br/>BaseHandler · BaseResult"]
     client["client<br/>Bitongue · BitongueConfig"]
 
@@ -26,7 +26,7 @@ graph BT
 |-|-|-|
 | `base` | Data-structure foundation and exception root | `BaseStruct`, `BitongueError` and its subclasses |
 | `flow` | In-memory flowing window: buffering, timing, expiry removal | `Flowing`, `BaseMessage`, `MessageEntry` |
-| `filter` | Message admission gate (Protocol) | `BaseFilter` |
+| `filter` | Message admission gate: Protocol and built-in filters | `BaseFilter`, `KeywordsFilter`, `SparseFilter` |
 | `handler` | Business handling extension point (Protocol) and result base | `BaseHandler`, `BaseResult` |
 | `client` | Lifecycle orchestration and both production/consumption ends | `Bitongue`, `BitongueConfig` |
 
@@ -62,6 +62,7 @@ The key points, mapped to the code:
 - **The filter chain does not short-circuit**: every filter runs; a single rejection drops the message.
 - **Handling timeouts are local**: a per-message timeout only affects that message (it is skipped); the generator keeps consuming.
 - **Handling exceptions propagate**: exceptions raised by the handler are wrapped as `MessageHandleError` and received by whoever iterates `result()`.
+- **Filter lifecycles can move up to the orchestrator**: filters implementing `FilterLifecycle` (`start()`/`aclose()`) are started and closed by `Bitongue.start()/shutdown()` — for `SparseFilter` this means collection creation and connection management, whose one-time cost lands on orchestrator startup instead of the first message.
 
 ## Concurrency model
 

@@ -99,6 +99,9 @@ CHANGELOG.md 由 [git-cliff](https://git-cliff.org) 依据提交历史自动生�
 - pytest 为 asyncio auto 模式，测试直接写 `async def`；
 - 外部依赖策略：单测使用 fakexx（如 fakeredis），无 fakexx 包的依赖用 async
   mock；集成测试（`test_integration/`，标记 `integration`）使用真实服务；
+- 集成测试连接 qdrant 时，通过环境变量 `BITONGUE_TEST_QDRANT_URL`（完整 URL）
+  或 `BITONGUE_TEST_QDRANT_HOST` / `BITONGUE_TEST_QDRANT_PORT`（默认
+  `localhost:6333`）指定目标；服务不可达时用例自动 skip 而非失败；
 - 新增功能必须附带测试，覆盖率不得低于 80%。
 
 ## 发布流程（维护者）

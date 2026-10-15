@@ -66,3 +66,31 @@ config = BitongueConfig(
 ```
 
 The meaning of this combination: in the worst case, a message takes no more than about 12 seconds from entering the buffer to finishing processing; expired or timed-out messages never block the consumption of later ones.
+
+## Filter configuration (`SparseFilter`)
+
+`SparseFilter` behavior is described by its constructor arguments and two
+policy structs (the full field lists live in the
+[API reference](../api); the tuning-relevant parts are below):
+
+| Parameter / field | Default | Meaning |
+|-|-|-|
+| `filter_threshold` | `0.8` | Duplicate threshold: a message is rejected once its similarity exceeds it; valid range is the open interval (0, 1) |
+| `normalize_scale` | `5.0` | Similarity saturation rate; the larger it is, the lower a BM25 score counts as highly similar (more sensitive) |
+| `Bm25Policy.language` | `"chinese"` | Chinese uses the local `Bm25CN` implementation (no download, no network); other languages use fastembed's `Bm25` |
+| `Bm25Policy.model_name` | `""` | Required for non-Chinese languages (an empty string means unset and fails at startup with a clear error); ignored on the Chinese path |
+| `Bm25Policy.k` / `b` / `avg_len` | `1.2` / `0.75` / `256.0` | BM25 formula parameters (term-frequency saturation, length normalization, average document length) |
+| `QdrantPolicy.location` / `url` / `host` / `path` | `host="localhost"` | Connection target; **the four are mutually exclusive** (enforced by qdrant-client); in-memory mode uses `location=":memory:"` with `host=None` |
+| `QdrantPolicy.port` / `grpc_port` | `6333` / `6334` | REST / gRPC ports for host-based connections |
+
+How to think about threshold and scale: under the defaults, "similarity > 0.8"
+is equivalent to "BM25 score > 0.8" — **even a single token overlapping the
+corpus can trigger interception** (harder on large corpora where the token's
+IDF is low, easier on small ones). To reduce false interception, raise
+`filter_threshold` (e.g. 0.9+) or lower `normalize_scale` (e.g. 2.0); to
+intercept near-duplicates more aggressively, adjust in the opposite direction.
+
+Non-Chinese embedding models are downloaded from HuggingFace on first use;
+place the cache with `Bm25Policy.cache_dir` or the `FASTEMBED_CACHE_PATH`
+environment variable. `KeywordsFilter` performs no network access and needs
+no configuration.

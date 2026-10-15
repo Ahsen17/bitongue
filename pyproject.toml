@@ -9,7 +9,12 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "anyio",
+    "fastembed",
+    "jieba",
     "msgspec",
+    "pyahocorasick",
+    "qdrant-client",
+    "uuid-utils",
 ]
 
 [project.urls]
@@ -42,6 +47,7 @@ lint = [
   "pyright",
   "ruff",
   "slotscheck",
+  "pyahocorasick-stubs",
 ]
 test = [
   "coverage",
@@ -55,6 +61,9 @@ test = [
 
 [tool.uv]
 default-groups = "all"
+
+[tool.uv.sources]
+pyahocorasick-stubs = { git = "https://github.com/Ahsen17/pyahocorasick-stubs.git" }
 
 [tool.ruff]
 src = ["src", "tests", "test_integration"]
@@ -130,7 +139,6 @@ max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401"]
-"**/migrations/*.py" = ["Q000"]
 "**/{tests,docs,tools}/*" = ["E402"]
 "docs/**/*.*" = ["S", "B", "DTZ", "A", "TC", "ERA", "D", "RET"]
 "tests/**/*.*" = [
@@ -219,7 +227,6 @@ addopts = ["--import-mode=importlib", "--asyncio-mode=auto"]
 # repository root has to be on `sys.path` for it to find the test task module.
 pythonpath = ["."]
 markers = [
-  "pg: integration tests that require a real PostgreSQL (set DAB_TEST_PG_DSN to enable)",
   "integration: end-to-end tests that drive the real assembly pipeline in subprocesses",
 ]
 filterwarnings = [

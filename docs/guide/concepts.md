@@ -33,6 +33,52 @@ async def filter(self, message: T) -> bool:
 - 过滤器链**不做短路**：即使第一个过滤器已拒绝，后续过滤器仍会执行。因此过滤器应当是只读的、无副作用的判断。
 - 不配置任何过滤器时，全部消息直接放行。
 
+## 内置过滤器
+
+除自定义 Protocol 实现外，`bitongue.filter` 还提供两个开箱即用的内置过滤器。
+两者遵循同一个 `True`/`False` 契约，但取向不同：`KeywordsFilter` 是**关键词黑名单**
+（命中即拒），`SparseFilter` 是**判重拦截**（与语料相似即拒）。
+
+### `KeywordsFilter` — 关键词黑名单
+
+基于 Aho-Corasick 自动机的多关键词匹配：
+
+- **命中即拒**：文本中出现任一关键词 → 拒绝；未命中 → 放行；
+- **归一化匹配**：关键词与消息文本都先经 `Normalizer` 归一化（casefold、
+  非词字符折叠为空格、NFKC），大小写与标点差异不影响命中；
+- **子串语义**：关键词作为文本片段出现即算命中（Aho-Corasick 匹配子串）；
+- **边界行为**：无文本载荷的消息放行（无可匹配内容）；空关键词列表拦截不到任何
+  消息，全部放行；
+- 词表可来自列表或 `load_from_file`（逐行读取、UTF-8、忽略空行），两条构造路径
+  行为一致；自动机在构造期完成构建，`filter` 是纯查询，无首次调用开销。
+
+### `SparseFilter` — 基于稀疏检索的判重拦截
+
+把参考语料嵌入 qdrant 稀疏集合（BM25 词频权重 + IDF 修正），每条消息作为二值
+查询向量检索语料：
+
+- **相似即拒**：消息与语料的相似度超过 `filter_threshold`（默认 0.8）→ 拒绝；
+  与语料无关 → 放行；无文本载荷 → 放行；
+- **相似度映射**：`similarity = scale·score / (1 + scale·score)`（`normalize_scale`
+  默认 5），随 BM25 分单调递增，score 为 0（零重叠）自然映射为 0。**阈值语义偏
+  敏感：默认参数下哪怕只有一个词元与语料重叠，BM25 分也可能越过 0.8 触发拦截**；
+  要求更宽松时提高 `filter_threshold`（如 0.9+）或调低 `normalize_scale`（如 2.0）；
+- **语料去重播种**：每个语料字符串按其文本的 UUID5 寻址，重复播种覆盖旧点而非
+  堆积副本；清洗后无有效词元的语料文档自动跳过；
+- **生命周期**：初始化包含建模与全量语料 upsert，开销较大，因此实现了
+  `FilterLifecycle`（`start()` / `aclose()`）：交给 `Bitongue` 编排器时由
+  `client.start()` 统一初始化、`shutdown()` 释放连接；独立使用时首次 `filter`
+  触发懒初始化（锁保护，一次性成本计入调用方的超时预算）；
+- **配置**：`Bm25Policy`（`language="chinese"` 走本地 `Bm25CN` 实现，零下载
+  零联网；其他语言走 fastembed `Bm25`，须提供 `model_name` 且首次使用下载模型）
+  与 `QdrantPolicy`（连接设置，字段镜像 qdrant-client 构造签名；`location` /
+  `url` / `host` / `path` 四者互斥，内存模式用 `location=":memory:"` 且
+  `host=None`）；
+- **语料分块由调用者负责**：每个字符串就是一个可检索单元。
+
+支撑工具 `Normalizer`（文本归一化）与 `JiebaTokenizer`（中文搜索引擎模式分词）
+也可独立使用。
+
 ## 处理器与结果（`BaseHandler` / `BaseResult`）
 
 `BaseHandler[T, R]` 是业务处理的扩展点，同样是 Protocol，实现一个异步方法：

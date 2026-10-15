@@ -110,6 +110,25 @@ HELLO BITONGUE
 3. 通过过滤的消息交给 `UpperHandler.handle` 处理，处理必须在 `handle_timeout` 秒内完成，产出 `UpperResult`。
 4. `result()` 逐条 yield 处理结果；示例取到第一条即结束。
 
+## 使用内置过滤器
+
+除了自己实现 `BaseFilter`，`bitongue.filter` 还内置两个开箱即用的过滤器。
+以关键词黑名单为例，只需替换过滤器集合：
+
+```python
+from bitongue.filter import KeywordsFilter
+
+client = Bitongue(
+    config,
+    handler=UpperHandler(),
+    filters=[KeywordsFilter(["spam", "违禁词"])],  # 命中任一关键词即拒绝
+)
+```
+
+另一个内置过滤器 `SparseFilter` 基于 qdrant 稀疏检索做判重拦截：给定参考语料，
+与语料相似的消息被拒绝、无关消息放行，适合近重复内容准入。两者的完整语义、
+配置项与边界行为（包括阈值调参直觉）见[核心概念](concepts.md)的「内置过滤器」一节。
+
 ## 下一步
 
 - 了解各部件的职责边界 → [核心概念](concepts.md)

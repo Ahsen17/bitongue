@@ -37,6 +37,49 @@ bitongue.filter.protocols
 .. automodule:: bitongue.filter.protocols
    :members:
 
+bitongue.filter.keywords
+------------------------
+
+.. automodule:: bitongue.filter.keywords
+   :members:
+
+bitongue.filter.sparse.bm25
+---------------------------
+
+.. automodule:: bitongue.filter.sparse.bm25
+   :members:
+   :exclude-members: Bm25
+
+bitongue.filter.sparse.filter
+-----------------------------
+
+.. automodule:: bitongue.filter.sparse.filter
+   :members:
+
+bitongue.filter.sparse.policy
+-----------------------------
+
+.. automodule:: bitongue.filter.sparse.policy
+   :members:
+
+bitongue.filter.sparse.stemmer
+------------------------------
+
+.. automodule:: bitongue.filter.sparse.stemmer
+   :members:
+
+bitongue.filter.utils.normalizer
+--------------------------------
+
+.. automodule:: bitongue.filter.utils.normalizer
+   :members:
+
+bitongue.filter.utils.tokenizer
+-------------------------------
+
+.. automodule:: bitongue.filter.utils.tokenizer
+   :members:
+
 bitongue.handler.protocols
 --------------------------
 

@@ -28,10 +28,11 @@ Bitongue is an async message flowing library: producers put messages into an in-
 
 - **In-memory message flowing window**: a bounded buffer built on anyio memory streams, with a configurable window size and message lifetime; expired messages are dropped automatically at consumption time, and rejected or expired messages never block the rest
 - **Filter-chain admission**: messages pass through the filter chain before processing; a message is released only when every filter accepts it, and rejected messages are dropped silently
+- **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching) and duplicate interception via `SparseFilter` (qdrant sparse retrieval — similar to the corpus means rejected); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
 - **Handler extension point**: implement one async `handle(message) -> result` method to plug in your business logic, keeping flow mechanics decoupled from message processing
 - **Two layers of timeout protection**: the flowing timeout bounds how long a message stays alive in the window, and the handle timeout caps how long a single message may take (a timeout actually cancels the in-flight work); timed-out messages are skipped without blocking the rest
 - **Type-safe data structures**: messages and results are msgspec structs with built-in dict and JSON serialization, and generic parameters flow through from send to result
-- **Minimal dependencies**: only anyio and msgspec at runtime — no heavier framework involved
+- **Layered dependencies**: the core (flowing window, orchestrator) depends only on anyio and msgspec; the built-in filters bring in domain dependencies such as fastembed, jieba, pyahocorasick, and qdrant-client
 
 ## Installation
 

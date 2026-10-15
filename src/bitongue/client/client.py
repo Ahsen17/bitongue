@@ -1,5 +1,3 @@
-"""The high-level orchestrator assembling the message flowing pipeline."""
-
 from collections.abc import AsyncGenerator, Collection
 from typing import TYPE_CHECKING
 
@@ -24,7 +22,9 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
     :class:`bitongue.flow.Flowing` window created from the config:
     :meth:`start` opens the window, :meth:`send` feeds it, and
     :meth:`result` drains it through expiry removal, the filter chain, and
-    the handler. Call :meth:`shutdown` when done.
+    the handler. Call :meth:`shutdown` when done. Filters implementing
+    :class:`bitongue.filter.FilterLifecycle` are started and closed with
+    the client.
     """
 
     def __init__(
@@ -44,7 +44,12 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
     async def start(self) -> None:
         """Create the flowing window from the config and start it.
 
-        Idempotent: calling it on a started client does nothing.
+        Filters implementing :class:`bitongue.filter.FilterLifecycle`
+        are started afterwards — detected structurally, to keep this
+        module import-light — so their initialization cost lands on
+        client start-up instead of the first filtered message. Filter
+        ``start`` should be idempotent, matching this method's own
+        contract: calling it on a started client does nothing.
         """
 
         if self._flow is None:
@@ -56,12 +61,27 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
         if not self._flow.running:
             await self._flow.start()
 
+        for lifecycle_filter in self._filters:
+            start = getattr(lifecycle_filter, "start", None)
+
+            if start is not None:
+                await start()
+
     async def shutdown(self) -> None:
         """Stop the flowing window and release it.
 
-        Idempotent: calling it on a stopped client does nothing. Messages
-        still buffered in the window are discarded.
+        Filters implementing :class:`bitongue.filter.FilterLifecycle`
+        are closed first, in reverse start order. Messages still
+        buffered in the window are discarded.
+
+        Idempotent: calling it on a stopped client does nothing.
         """
+
+        for lifecycle_filter in reversed(list(self._filters)):
+            aclose = getattr(lifecycle_filter, "aclose", None)
+
+            if aclose is not None:
+                await aclose()
 
         if self._flow is not None:
             if self._flow.running:
