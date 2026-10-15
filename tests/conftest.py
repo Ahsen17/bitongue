@@ -4,6 +4,7 @@ Subtree-specific fixtures live in their subtree's ``conftest.py``.
 """
 
 from collections.abc import Awaitable, Callable
+from uuid import uuid4
 
 import anyio
 import pytest
@@ -19,7 +20,7 @@ def make_message() -> MakeMessage:
     """Factory fixture for minimal text messages."""
 
     def _make(text: str = "hello") -> BaseMessage:
-        return BaseMessage(type="text", text=text)
+        return BaseMessage(id=uuid4(), type="text", text=text)
 
     return _make
 

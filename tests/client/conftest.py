@@ -54,7 +54,7 @@ class ScriptedHandler:
             await anyio.sleep(delay)
         if self.error is not None:
             raise self.error
-        return EchoResult(content=message.text or "")
+        return EchoResult(id=message.id, content=message.text or "")
 
 
 def _build_client(

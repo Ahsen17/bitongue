@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import anyio
 
 from .exceptions import FlowingNotInitializedError
-from .schemas import BaseMessage, MessageEntry
+from .message import BaseMessage, MessageEntry
 
 if TYPE_CHECKING:
     from anyio.streams.memory import (

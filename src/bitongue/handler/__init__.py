@@ -1,5 +1,5 @@
 from .protocols import BaseHandler
-from .schemas import BaseResult
+from .result import BaseResult
 
 __all__ = (
     "BaseHandler",

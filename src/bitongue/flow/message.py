@@ -1,6 +1,7 @@
 """Message models carried by the flowing window."""
 
 from typing import Literal
+from uuid import UUID
 
 from msgspec import field
 
@@ -16,11 +17,14 @@ class BaseMessage(BaseStruct):
     """Base message delivered through the flowing window.
 
     Attributes:
+        id: Caller-supplied unique identifier; bitongue never generates
+            one — carry over the business-side ID the message came with.
         type: Message kind; currently fixed to ``"text"``.
         text: The message content; ``None`` means the message carries no
             text payload.
     """
 
+    id: UUID
     type: Literal["text"]
     text: str | None = field(default=None)
 
