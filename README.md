@@ -31,19 +31,20 @@ Bitongue 是一个异步消息流处理库：生产者把消息投入内存流�
 
 - **内存消息流窗口**：基于 anyio 内存流的有界缓冲，窗口容量与消息存活时间可配置，
   过期消息在消费时自动剔除，被拒绝或过期的消息不阻塞后续消费
-- **过滤器链准入**：消息进入处理前依次通过过滤器链，全部通过才放行，
+- **过滤器链准入**：消息进入处理前经过过滤器链，过滤器并发执行、全部通过才放行，
   被拒绝的消息静默丢弃
 - **内置过滤器**：关键词黑名单 `KeywordsFilter`（Aho-Corasick，归一化匹配）
   与判重拦截 `SparseFilter`（qdrant 稀疏检索，语料相似即拒）；
   实现 `FilterLifecycle` 的过滤器由编排器统一启动与关闭
 - **处理器扩展点**：实现一个异步 `handle(message) -> result` 方法即可接入业务逻辑，
   消息流转机制与业务处理解耦
-- **双层超时保护**：流窗口超时控制消息存活，处理超时限制单条消息的处理耗时
-  （超时会真正取消处理中的执行），超时消息被跳过而不阻塞后续消息
+- **双层超时保护**：流窗口超时控制消息存活，处理超时限制单条消息过滤与处理的合计耗时
+  （超时会真正取消执行中的工作），超时消息被跳过而不阻塞后续消息
 - **类型安全的数据结构**：消息与结果均为 msgspec 结构体，自带字典与 JSON 序列化，
   泛型参数贯穿发送到结果的全流程
-- **分层依赖**：核心（流窗口、编排器）仅依赖 anyio 与 msgspec；
-  内置过滤器扩展引入 fastembed、jieba、pyahocorasick、qdrant-client 等领域依赖
+- **分层依赖**：核心（流窗口、编排器、关键词过滤器）仅依赖 anyio、msgspec、
+  pyahocorasick 等少量包；判重拦截 `SparseFilter` 的领域依赖（fastembed、jieba、
+  qdrant-client）随可选依赖组 `sparse` 按需安装
 
 ## 安装
 
@@ -61,11 +62,20 @@ pip install bitongue
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
+使用内置判重过滤器 `SparseFilter` 时，还需安装可选依赖组 `sparse`
+（pip 用户写 `pip install "bitongue[sparse]"`）：
+
+```bash
+uv add "bitongue[sparse]"
+```
+
 ## 快速上手
 
 定义一个过滤器（丢弃空文本）和一个处理器（转大写），发送两条消息并消费结果：
 
 ```python
+from uuid import uuid4
+
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
@@ -91,21 +101,22 @@ class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
     """处理器：把文本转成大写。"""
 
     async def handle(self, message: BaseMessage) -> UpperResult:
-        return UpperResult(text=(message.text or "").upper())
+        return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
 async def main() -> None:
     config = BitongueConfig(
         flowing_size=16,       # 流窗口容量（有界缓冲大小）
         flowing_timeout=30,    # 消息在窗口内的存活秒数
-        handle_timeout=5.0,    # 单条消息的处理超时秒数
+        handle_timeout=5.0,    # 单条消息过滤+处理的超时秒数
         handle_concurrency=1,  # 处理并发（预留字段）
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 
     await client.start()
-    await client.send(BaseMessage(type="text", text="hello bitongue"))
-    await client.send(BaseMessage(type="text", text=""))  # 会被过滤器丢弃
+    # id 由业务侧生成后透传；真实场景通常用业务系统已有的标识
+    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
+    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # 会被过滤器丢弃
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE
@@ -133,17 +144,17 @@ flowchart LR
     P[生产者] -->|send| W[流窗口 Flowing<br>有界缓冲 + 存活计时]
     W -->|按序取出| D{过期剔除}
     D -->|过期| X[静默丢弃]
-    D --> F[过滤器链<br>全部通过才放行]
+    D --> F[过滤器链<br>并发执行 全部通过才放行]
     F -->|拒绝| X
-    F --> H[处理器<br>handle_timeout 限时]
+    F --> H[处理器<br>过滤+处理合计受 handle_timeout 限时]
     H -->|yield 结果| C[消费者 result]
 ```
 
 - **生产侧**：`Bitongue.send()` 把消息包装成条目（记录入库时刻与存活时间）投入
   有界缓冲；窗口满时发送方等待，形成背压。
 - **消费侧**：`Bitongue.result()` 按序取出条目，先剔除入库后超过存活时间的过期消息；
-  过滤链全部通过的消息交给处理器，处理耗时受 `handle_timeout` 约束，超时消息被跳过；
-  处理器异常包装为 `MessageHandleError` 向消费者传播。
+  过滤器并发执行，全部通过的消息交给处理器，过滤与处理合计受 `handle_timeout` 约束，
+  超时消息被跳过；处理器异常包装为 `MessageHandleError` 向消费者传播。
 
 完整结构与一条消息的生命周期见[架构与数据流](https://ahsen17.github.io/bitongue/guide/architecture.html)。
 

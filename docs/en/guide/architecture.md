@@ -48,7 +48,7 @@ sequenceDiagram
     F->>F: bounded buffer (sender waits when full)
     C->>F: flow() draws entries in order
     F-->>C: entries past their lifetime are dropped as expired
-    C->>FC: calls filter(message) one by one
+    C->>FC: calls filter(message) concurrently in a task group
     FC-->>C: all passed? otherwise the message is dropped silently
     C->>H: handle(message) (bounded by handle_timeout)
     H-->>C: returns result R
@@ -59,8 +59,8 @@ The key points, mapped to the code:
 
 - **The clock starts at entry**: `send()` records `enter_time` immediately, so time spent waiting in the buffer counts against the lifetime.
 - **Expiry is enforced on the consumer side**: an expired entry is discovered and skipped when drawn — nothing is produced, nothing raises.
-- **The filter chain does not short-circuit**: every filter runs; a single rejection drops the message.
-- **Handling timeouts are local**: a per-message timeout only affects that message (it is skipped); the generator keeps consuming.
+- **The filter chain runs concurrently and does not short-circuit**: the filters start together inside one task group and all of them run; a single rejection drops the message.
+- **Handling timeouts are local**: `handle_timeout` covers both the filtering and handling phases of one message; a timeout only affects that message (it is skipped), and the generator keeps consuming.
 - **Handling exceptions propagate**: exceptions raised by the handler are wrapped as `MessageHandleError` and received by whoever iterates `result()`.
 - **Filter lifecycles can move up to the orchestrator**: filters implementing `FilterLifecycle` (`start()`/`aclose()`) are started and closed by `Bitongue.start()/shutdown()` — for `SparseFilter` this means collection creation and connection management, whose one-time cost lands on orchestrator startup instead of the first message.
 
@@ -69,7 +69,8 @@ The key points, mapped to the code:
 - All async primitives come from anyio, so the library runs on asyncio as well as trio;
 - The flowing window is a bounded memory stream: a full buffer makes `send()` wait (backpressure), an empty one makes `result()` wait;
 - `result()`'s underlying stream is single-consumer; exactly one task should iterate it at a time;
-- `handle_timeout` is implemented with an anyio cancel scope, so a timeout actually cancels the work inside the handler rather than merely abandoning the wait.
+- The filter chain uses aioresult to run its filters concurrently inside a task group and combines their verdicts once all complete;
+- `handle_timeout` is implemented with an anyio cancel scope, so a timeout actually cancels the work inside filtering and handling rather than merely abandoning the wait.
 
 ## Design trade-offs
 

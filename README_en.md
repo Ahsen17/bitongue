@@ -27,12 +27,12 @@ Bitongue is an async message flowing library: producers put messages into an in-
 ## Features
 
 - **In-memory message flowing window**: a bounded buffer built on anyio memory streams, with a configurable window size and message lifetime; expired messages are dropped automatically at consumption time, and rejected or expired messages never block the rest
-- **Filter-chain admission**: messages pass through the filter chain before processing; a message is released only when every filter accepts it, and rejected messages are dropped silently
+- **Filter-chain admission**: messages pass through the filter chain before processing; filters run concurrently and a message is released only when every filter accepts it, while rejected messages are dropped silently
 - **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching) and duplicate interception via `SparseFilter` (qdrant sparse retrieval — similar to the corpus means rejected); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
 - **Handler extension point**: implement one async `handle(message) -> result` method to plug in your business logic, keeping flow mechanics decoupled from message processing
-- **Two layers of timeout protection**: the flowing timeout bounds how long a message stays alive in the window, and the handle timeout caps how long a single message may take (a timeout actually cancels the in-flight work); timed-out messages are skipped without blocking the rest
+- **Two layers of timeout protection**: the flowing timeout bounds how long a message stays alive in the window, and the handle timeout caps the combined time a single message may spend in filtering and handling (a timeout actually cancels the in-flight work); timed-out messages are skipped without blocking the rest
 - **Type-safe data structures**: messages and results are msgspec structs with built-in dict and JSON serialization, and generic parameters flow through from send to result
-- **Layered dependencies**: the core (flowing window, orchestrator) depends only on anyio and msgspec; the built-in filters bring in domain dependencies such as fastembed, jieba, pyahocorasick, and qdrant-client
+- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra
 
 ## Installation
 
@@ -50,11 +50,21 @@ Python ≥ 3.12 is required. If the package is not yet published to PyPI, instal
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
+Using the built-in duplicate-interception filter `SparseFilter` additionally
+requires the optional `sparse` extra (pip users write
+`pip install "bitongue[sparse]"`):
+
+```bash
+uv add "bitongue[sparse]"
+```
+
 ## Quick start
 
 Define a filter (drops empty text) and a handler (uppercases text), send two messages, and consume the result:
 
 ```python
+from uuid import uuid4
+
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
@@ -80,21 +90,23 @@ class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
     """A handler that uppercases the text."""
 
     async def handle(self, message: BaseMessage) -> UpperResult:
-        return UpperResult(text=(message.text or "").upper())
+        return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
 async def main() -> None:
     config = BitongueConfig(
         flowing_size=16,       # flowing window capacity (bounded buffer size)
         flowing_timeout=30,    # seconds a message stays alive in the window
-        handle_timeout=5.0,    # per-message handling timeout in seconds
+        handle_timeout=5.0,    # per-message filtering+handling timeout in seconds
         handle_concurrency=1,  # handling concurrency (reserved field)
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 
     await client.start()
-    await client.send(BaseMessage(type="text", text="hello bitongue"))
-    await client.send(BaseMessage(type="text", text=""))  # dropped by the filter
+    # The id is generated on the business side and passed through; real
+    # applications typically reuse an identifier they already have.
+    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
+    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # dropped by the filter
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE
@@ -122,14 +134,14 @@ flowchart LR
     P[Producer] -->|send| W[Flowing window<br>bounded buffer + lifetime clock]
     W -->|in order| D{Expiry check}
     D -->|expired| X[Dropped silently]
-    D --> F[Filter chain<br>all must pass]
+    D --> F[Filter chain<br>concurrent, all must pass]
     F -->|rejected| X
-    F --> H[Handler<br>bounded by handle_timeout]
+    F --> H[Handler<br>filtering+handling bounded by handle_timeout]
     H -->|yield results| C[Consumer result]
 ```
 
 - **Production side**: `Bitongue.send()` wraps a message into an entry (recording its entry time and lifetime) and puts it into the bounded buffer; when the window is full the sender waits, creating backpressure.
-- **Consumption side**: `Bitongue.result()` draws entries in order and first drops those past their lifetime; messages that pass the whole filter chain go to the handler under the `handle_timeout` bound, and timed-out messages are skipped; handler exceptions are wrapped as `MessageHandleError` and propagate to the consumer.
+- **Consumption side**: `Bitongue.result()` draws entries in order and first drops those past their lifetime; filters run concurrently and messages accepted by all of them go to the handler under the combined `handle_timeout` bound covering filtering and handling, while timed-out messages are skipped; handler exceptions are wrapped as `MessageHandleError` and propagate to the consumer.
 
 For the full structure and the life of a message, see [Architecture and data flow](https://ahsen17.github.io/bitongue/en/guide/architecture.html).
 
