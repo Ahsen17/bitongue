@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator, Collection
 from typing import TYPE_CHECKING
 
 import anyio
+from aioresult import ResultCapture
 
 from bitongue.flow import BaseMessage, Flowing
 from bitongue.handler import BaseResult
@@ -41,6 +42,13 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
 
         self._flow: Flowing[T] | None = None
 
+        self._running = False
+
+    @property
+    def running(self) -> bool:
+
+        return self._running
+
     async def start(self) -> None:
         """Create the flowing window from the config and start it.
 
@@ -51,6 +59,9 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
         ``start`` should be idempotent, matching this method's own
         contract: calling it on a started client does nothing.
         """
+
+        if self._running:
+            return
 
         if self._flow is None:
             self._flow = Flowing[T](
@@ -67,6 +78,8 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
             if start is not None:
                 await start()
 
+        self._running = True
+
     async def shutdown(self) -> None:
         """Stop the flowing window and release it.
 
@@ -76,6 +89,9 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
 
         Idempotent: calling it on a stopped client does nothing.
         """
+
+        if not self._running:
+            return
 
         for lifecycle_filter in reversed(list(self._filters)):
             aclose = getattr(lifecycle_filter, "aclose", None)
@@ -89,6 +105,8 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
 
             self._flow = None
 
+        self._running = False
+
     async def send(self, message: "T") -> None:
         """Put a message into the flowing window.
 
@@ -99,18 +117,48 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
                 shut down after starting.
         """
 
-        if self._flow is None or not self._flow.running:
+        if not self._running or self._flow is None or not self._flow.running:
             raise RuntimeError("Run `start` first.")
 
         await self._flow.draw(message)
 
+    async def _filtered(self, message: "T") -> bool:
+
+        captures: list[ResultCapture[bool]] = []
+        async with anyio.create_task_group() as tg:
+            captures.extend(
+                ResultCapture.start_soon(
+                    tg,
+                    _filter.filter,
+                    message,
+                )
+                for _filter in self._filters
+            )
+
+        return not all(capture.result() for capture in captures)
+
+    async def _handle(self, message: "T") -> "R | None":
+
+        with anyio.fail_after(self._config.handle_timeout):
+            if await self._filtered(message):
+                return None
+
+            try:
+                return await self._handler.handle(message)
+
+            except Exception as exc:
+                raise MessageHandleError(
+                    f"Message handle failed. Error: {exc}",
+                ) from exc
+
     async def result(self) -> AsyncGenerator["R", None]:
         """Yield handling results for messages drawn from the window.
 
-        Each message passes, in order: expiry removal, the filter chain
-        (every filter must accept; the chain does not short-circuit), and
-        the handler bounded by the configured handle timeout. A message
-        whose filter rejects it or whose handling times out is skipped
+        Each message passes, in order: expiry removal, the filter chain —
+        filters run concurrently and every one must accept; the chain
+        does not short-circuit — and the handler. The configured handle
+        timeout bounds filtering and handling together. A message whose
+        filter rejects it or whose handling times out is skipped
         silently — no result, no error, later messages unaffected. An
         exception raised inside the handler is wrapped into
         :class:`MessageHandleError` and propagates to the consumer.
@@ -130,31 +178,10 @@ class Bitongue[T: BaseMessage, R: BaseResult]:
 
         async for message in self._flow.flow():
             try:
-                with anyio.fail_after(
-                    delay=self._config.handle_timeout,
-                    reason="Handle timeout",
-                ):
-                    if not all(
-                        [
-                            await _filter.filter(
-                                message,
-                            )
-                            for _filter in self._filters
-                        ]
-                        if self._filters
-                        else []
-                    ):
-                        continue
+                result = await self._handle(message)
 
-                    try:
-                        result = await self._handler.handle(message)
-
-                    except Exception as exc:
-                        raise MessageHandleError(
-                            f"Message handle failed. Error: {exc}",
-                        ) from exc
-
-                yield result
+                if result is not None:
+                    yield result
 
             except anyio.get_cancelled_exc_class():
                 raise

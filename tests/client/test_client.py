@@ -12,6 +12,7 @@ from tests.client.conftest import (
 from tests.conftest import MakeMessage, WaitUntil
 
 from bitongue.client import MessageHandleError
+from bitongue.flow import BaseMessage
 
 
 class TestFilterChain:
@@ -112,6 +113,61 @@ class TestFilterChain:
 
         await client.shutdown()
         assert [item.content for item in results] == ["m1", "m2"]
+
+
+class TestConcurrentFilters:
+    """The filter chain runs its filters concurrently, not one by one."""
+
+    async def test_filters_run_concurrently(
+        self,
+        make_client: MakeClient,
+        make_handler: MakeHandler,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        # The first filter blocks until the second one has been entered.
+        # Sequential execution would deadlock into the handle timeout and
+        # drop the message; concurrent execution lets both complete.
+        release_first = anyio.Event()
+
+        class BlockingFilter:
+            """Filter that waits until its companion has started."""
+
+            def __init__(self) -> None:
+                self.seen: list[BaseMessage] = []
+
+            async def filter(self, message: BaseMessage) -> bool:
+                self.seen.append(message)
+                with anyio.fail_after(2):
+                    await release_first.wait()
+
+                return True
+
+        class ReleasingFilter:
+            """Companion filter that unblocks the waiting one."""
+
+            def __init__(self) -> None:
+                self.seen: list[BaseMessage] = []
+
+            async def filter(self, message: BaseMessage) -> bool:
+                self.seen.append(message)
+                release_first.set()
+
+                return True
+
+        blocking = BlockingFilter()
+        releasing = ReleasingFilter()
+        handler = make_handler()
+        client = make_client(handler=handler, filters=[blocking, releasing])
+        await client.start()
+        await client.send(make_message("concurrent"))
+
+        results = await collect_results(client, count=1)
+
+        await client.shutdown()
+        assert [item.content for item in results] == ["concurrent"]
+        assert len(blocking.seen) == 1
+        assert len(releasing.seen) == 1
 
 
 class TestHandleTimeout:
@@ -218,6 +274,44 @@ class TestClientLifecycle:
         client = make_client()
 
         await client.shutdown()
+
+    async def test_running_reflects_lifecycle(self, make_client: MakeClient) -> None:
+        # Read the property into a local before asserting: mypy narrows
+        # read-only member accesses, and asserting on the member directly
+        # would mark the later statements unreachable.
+        client = make_client()
+
+        before = client.running
+        assert before is False
+
+        await client.start()
+
+        started = client.running
+        assert started is True
+
+        await client.shutdown()
+
+        after = client.running
+        assert after is False
+
+    async def test_double_start_preserves_buffered_messages(
+        self,
+        make_client: MakeClient,
+        make_message: MakeMessage,
+        collect_results: CollectResults,
+    ) -> None:
+        # A redundant start() must be a no-op: recreating the window here
+        # would silently drop the message buffered before the second call.
+        client = make_client()
+        await client.start()
+        await client.send(make_message("kept"))
+
+        await client.start()
+
+        results = await collect_results(client, count=1)
+
+        await client.shutdown()
+        assert [item.content for item in results] == ["kept"]
 
     async def test_double_start_keeps_client_usable(
         self,
