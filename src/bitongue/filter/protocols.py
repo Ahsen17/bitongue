@@ -4,11 +4,14 @@ A filter decides whether a message is allowed to proceed to handling.
 Implement the protocol with a plain class — no inheritance required.
 """
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from bitongue.flow import BaseMessage
 
-__all__ = ("BaseFilter",)
+__all__ = (
+    "BaseFilter",
+    "FilterLifecycle",
+)
 
 
 class BaseFilter[T: BaseMessage](Protocol):
@@ -24,3 +27,24 @@ class BaseFilter[T: BaseMessage](Protocol):
     """
 
     async def filter(self, message: "T") -> bool: ...
+
+
+@runtime_checkable
+class FilterLifecycle(Protocol):
+    """Lifecycle hooks for filters that hold runtime resources.
+
+    A filter that builds connections or loads models implements this
+    protocol so the orchestrator can pay the initialization cost once at
+    client start-up instead of on the first filtered message: the client
+    calls :meth:`start` when it starts and :meth:`aclose` when it shuts
+    down. Plain filters do not implement it and work with no lifecycle
+    management.
+
+    The capability is detected structurally, so :meth:`start` should be
+    idempotent — a filter started eagerly by the client still tolerates a
+    lazy start attempt from its own code path.
+    """
+
+    async def start(self) -> None: ...
+
+    async def aclose(self) -> None: ...
