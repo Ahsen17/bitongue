@@ -35,9 +35,10 @@ async def filter(self, message: T) -> bool:
 
 ## 内置过滤器
 
-除自定义 Protocol 实现外，`bitongue.filter` 还提供两个开箱即用的内置过滤器。
-两者遵循同一个 `True`/`False` 契约，但取向不同：`KeywordsFilter` 是**关键词黑名单**
-（命中即拒），`SparseFilter` 是**判重拦截**（与语料相似即拒）。
+除自定义 Protocol 实现外，`bitongue.filter` 还提供三个开箱即用的内置过滤器。
+三者遵循同一个 `True`/`False` 契约，但取向不同：`KeywordsFilter` 是**关键词黑名单**
+（命中即拒），`SparseFilter` 是**判重拦截**（与语料相似即拒），`NeuroFilter` 是
+**模型判定**（按自然语言规则交给大语言模型裁决）。
 
 ### `KeywordsFilter` — 关键词黑名单
 
@@ -75,6 +76,40 @@ async def filter(self, message: T) -> bool:
   `url` / `host` / `path` 四者互斥，内存模式用 `location=":memory:"` 且
   `host=None`）；
 - **语料分块由调用者负责**：每个字符串就是一个可检索单元。
+
+### `NeuroFilter` — 基于大语言模型的规则判定
+
+把过滤规则与消息文本一起交给 OpenAI 兼容的对话端点（内部经由
+[autogen](https://microsoft.github.io/autogen/) 的 `AssistantAgent`），由模型
+按规则给出结构化判定：
+
+- **判定即拒**：模型判定 `filtered=True` → 拒绝；判定放行 → 放行。规则支持
+  单个字符串或字符串列表（列表按行拼接为一段规则文本）；
+- **无模型调用即放行**：无文本载荷、或规则清洗后为空的消息直接放行——这两类
+  边界不发起任何模型调用；
+- **模型路径上的失败一律抛出**：响应不符合约定判定结构（`ValueError`）、后端
+  错误、或单次调用超过 `timeout`（`TimeoutError`）都原样传播，过滤器不做
+  吞没；交给编排器时，超时由 `handle_timeout` 的既有契约接住（该消息被静默
+  跳过），其余错误向消费者传播；
+- **消息间隔离**：每次判定使用独立的对话上下文，判定完成后立即清空——前一条
+  消息的文本不会进入后一条的请求；单实例不可并发调用（编排器的单消费者管线
+  已保证串行）；
+- **生命周期**：构造只保存配置、不发起网络请求；`start()` 构建代理与模型
+  客户端，未启动就调用 `filter` 抛 `RuntimeError`。与 `SparseFilter` 的懒
+  初始化不同，`NeuroFilter` 必须先启动——交给编排器时由 `client.start()`
+  统一处理；
+- **配置**：`NeuroFilterPolicy`（端点 `base_url`、`api_key`、模型 `model`、
+  规则 `rules`、单次判定超时 `timeout`）；端点与模型能力声明的定制点是
+  `OpenAIClientProvider`。注意序列化 policy（`to_json`）会把 `api_key`
+  一并带出，序列化结果按机密信息对待；
+- **依赖**：随可选依赖组 `neuro` 发布，从独立子包导入：
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+```
+
+判定结果类型是 pydantic 模型——这是 autogen 结构化输出的强制要求，也是整个
+库对「数据结构一律 msgspec」约定的唯一例外。
 
 支撑工具 `Normalizer`（文本归一化）可独立使用；`JiebaTokenizer`（中文搜索引擎
 模式分词）随 `SparseFilter` 位于 sparse 子包（`bitongue.filter.sparse`），

@@ -35,6 +35,14 @@ published as the optional `sparse` extra; install it if you need that filter
 uv add "bitongue[sparse]"
 ```
 
+The built-in `NeuroFilter` depends on the autogen packages, published as the
+optional `neuro` extra; install it if you need that filter (pip users write
+`pip install "bitongue[neuro]"`):
+
+```bash
+uv add "bitongue[neuro]"
+```
+
 ## Your first example
 
 Developing with Bitongue means "implement three parts and hand them to an orchestrator":
@@ -148,8 +156,30 @@ section above) and is imported from the sparse subpackage:
 from bitongue.filter.sparse import SparseFilter
 ```
 
+The third built-in filter, `NeuroFilter`, hands natural-language rules and
+the message text to a large language model for judgment — a good fit for
+semantic admission that keywords cannot enumerate (for example, "reject
+abusive content"). It requires the optional `neuro` extra (see the
+installation section above), is imported from its own subpackage, and must
+be started first — handing it to an orchestrator covers this through
+`client.start()`:
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+
+neuro = NeuroFilter(
+    NeuroFilterPolicy(
+        base_url="https://api.example.com/v1",
+        api_key="<your-api-key>",
+        model="<model-name>",
+        rules="Reject messages containing abuse or profanity.",
+    ),
+)
+client = Bitongue(config, handler=UpperHandler(), filters=[neuro])
+```
+
 For the full semantics, configuration, and boundary behavior
-of both (including how to think about the threshold), see the "Built-in
+of all three (including how to think about the threshold), see the "Built-in
 filters" section of [Core concepts](concepts.md).
 
 ## Next steps

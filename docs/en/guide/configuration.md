@@ -94,3 +94,27 @@ Non-Chinese embedding models are downloaded from HuggingFace on first use;
 place the cache with `Bm25Policy.cache_dir` or the `FASTEMBED_CACHE_PATH`
 environment variable. `KeywordsFilter` performs no network access and needs
 no configuration.
+
+## Filter configuration (`NeuroFilter`)
+
+`NeuroFilter` behavior is described by a single struct, `NeuroFilterPolicy`:
+
+| Field | Default | Meaning |
+|-|-|-|
+| `base_url` | required | Base URL of an OpenAI-compatible chat endpoint |
+| `api_key` | required | Endpoint key; serializing the policy (`to_json`) carries it along, so treat a serialized policy as secret material |
+| `model` | required | Model name served by the endpoint |
+| `rules` | required | Filtering rules; a list of strings is joined into one rule block with newlines, a single string is used verbatim; rules that normalize to nothing release every message |
+| `timeout` | `10.0` | Seconds allowed for one model verdict; a call that outlives it raises `TimeoutError` |
+
+Division of labor between the two timeout layers: `timeout` governs a single
+model call and raises once exceeded, while the whole filtering phase still
+counts against the `handle_timeout` budget — a pipeline with `NeuroFilter`
+needs a `handle_timeout` that accommodates the model call's typical latency.
+
+Endpoint and model capability claims are customized in
+`OpenAIClientProvider`: the client declares structured output and related
+capabilities to autogen, which is what makes the model answer with the agreed
+JSON verdict shape. A backend model that does not actually support them fails
+at call time — declare the real capabilities there when adapting to a
+non-standard backend.

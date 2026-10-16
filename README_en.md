@@ -28,11 +28,11 @@ Bitongue is an async message flowing library: producers put messages into an in-
 
 - **In-memory message flowing window**: a bounded buffer built on anyio memory streams, with a configurable window size and message lifetime; expired messages are dropped automatically at consumption time, and rejected or expired messages never block the rest
 - **Filter-chain admission**: messages pass through the filter chain before processing; filters run concurrently and a message is released only when every filter accepts it, while rejected messages are dropped silently
-- **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching) and duplicate interception via `SparseFilter` (qdrant sparse retrieval — similar to the corpus means rejected); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
+- **Built-in filters**: the keyword blocklist `KeywordsFilter` (Aho-Corasick with normalized matching), duplicate interception via `SparseFilter` (qdrant sparse retrieval — similar to the corpus means rejected), and model judgment via `NeuroFilter` (natural-language rules decided by a large language model); filters implementing `FilterLifecycle` are started and stopped by the orchestrator
 - **Handler extension point**: implement one async `handle(message) -> result` method to plug in your business logic, keeping flow mechanics decoupled from message processing
 - **Two layers of timeout protection**: the flowing timeout bounds how long a message stays alive in the window, and the handle timeout caps the combined time a single message may spend in filtering and handling (a timeout actually cancels the in-flight work); timed-out messages are skipped without blocking the rest
 - **Type-safe data structures**: messages and results are msgspec structs with built-in dict and JSON serialization, and generic parameters flow through from send to result
-- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra
+- **Layered dependencies**: the core (flowing window, orchestrator, keyword filter) depends only on a few packages such as anyio, msgspec, and pyahocorasick; the domain dependencies of duplicate interception via `SparseFilter` (fastembed, jieba, qdrant-client) ship as the optional `sparse` extra, and those of model judgment via `NeuroFilter` (autogen) ship as the optional `neuro` extra
 
 ## Installation
 
@@ -56,6 +56,13 @@ requires the optional `sparse` extra (pip users write
 
 ```bash
 uv add "bitongue[sparse]"
+```
+
+Using the built-in model-judgment filter `NeuroFilter` additionally requires
+the optional `neuro` extra (pip users write `pip install "bitongue[neuro]"`):
+
+```bash
+uv add "bitongue[neuro]"
 ```
 
 ## Quick start

@@ -10,7 +10,7 @@ The library is organized into five subpackages with bottom-up dependencies: `bas
 graph BT
     base["base<br/>BaseStruct · exception hierarchy"]
     flow["flow<br/>Flowing · BaseMessage · MessageEntry"]
-    filter["filter<br/>BaseFilter · KeywordsFilter · SparseFilter"]
+    filter["filter<br/>BaseFilter · KeywordsFilter · SparseFilter · NeuroFilter"]
     handler["handler<br/>BaseHandler · BaseResult"]
     client["client<br/>Bitongue · BitongueConfig"]
 
@@ -26,7 +26,7 @@ graph BT
 |-|-|-|
 | `base` | Data-structure foundation and exception root | `BaseStruct`, `BitongueError` and its subclasses |
 | `flow` | In-memory flowing window: buffering, timing, expiry removal | `Flowing`, `BaseMessage`, `MessageEntry` |
-| `filter` | Message admission gate: Protocol and built-in filters | `BaseFilter`, `KeywordsFilter`, `SparseFilter` |
+| `filter` | Message admission gate: Protocol and built-in filters | `BaseFilter`, `KeywordsFilter`, `SparseFilter`, `NeuroFilter` |
 | `handler` | Business handling extension point (Protocol) and result base | `BaseHandler`, `BaseResult` |
 | `client` | Lifecycle orchestration and both production/consumption ends | `Bitongue`, `BitongueConfig` |
 
@@ -62,7 +62,7 @@ The key points, mapped to the code:
 - **The filter chain runs concurrently and does not short-circuit**: the filters start together inside one task group and all of them run; a single rejection drops the message.
 - **Handling timeouts are local**: `handle_timeout` covers both the filtering and handling phases of one message; a timeout only affects that message (it is skipped), and the generator keeps consuming.
 - **Handling exceptions propagate**: exceptions raised by the handler are wrapped as `MessageHandleError` and received by whoever iterates `result()`.
-- **Filter lifecycles can move up to the orchestrator**: filters implementing `FilterLifecycle` (`start()`/`aclose()`) are started and closed by `Bitongue.start()/shutdown()` — for `SparseFilter` this means collection creation and connection management, whose one-time cost lands on orchestrator startup instead of the first message.
+- **Filter lifecycles can move up to the orchestrator**: filters implementing `FilterLifecycle` (`start()`/`aclose()`) are started and closed by `Bitongue.start()/shutdown()` — for `SparseFilter` this means collection creation and connection management, for `NeuroFilter` building the agent and the model client, with the one-time cost landing on orchestrator startup instead of the first message.
 
 ## Concurrency model
 

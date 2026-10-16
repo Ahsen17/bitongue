@@ -74,6 +74,24 @@ bitongue.filter.sparse.tokenizer
 .. automodule:: bitongue.filter.sparse.tokenizer
    :members:
 
+bitongue.filter.neuro.filter
+----------------------------
+
+.. automodule:: bitongue.filter.neuro.filter
+   :members:
+
+bitongue.filter.neuro.policy
+----------------------------
+
+.. automodule:: bitongue.filter.neuro.policy
+   :members:
+
+bitongue.filter.neuro.provider
+------------------------------
+
+.. automodule:: bitongue.filter.neuro.provider
+   :members:
+
 bitongue.filter.utils.normalizer
 --------------------------------
 

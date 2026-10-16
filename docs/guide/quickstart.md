@@ -34,6 +34,13 @@ uv add git+https://github.com/Ahsen17/bitongue.git
 uv add "bitongue[sparse]"
 ```
 
+内置的 `NeuroFilter` 依赖 autogen 相关包，随可选依赖组 `neuro` 发布，按需安装
+（pip 用户写 `pip install "bitongue[neuro]"`）：
+
+```bash
+uv add "bitongue[neuro]"
+```
+
 ## 第一个示例
 
 围绕 Bitongue 的开发方式是「实现三个部件，交给编排器」：
@@ -143,7 +150,26 @@ client = Bitongue(
 from bitongue.filter.sparse import SparseFilter
 ```
 
-两者的完整语义、配置项与边界行为（包括阈值调参直觉）
+第三个内置过滤器 `NeuroFilter` 把自然语言规则与消息文本一起交给大语言模型
+裁决，适合关键词难以穷举的语义类准入（例如「拒绝带攻击性的内容」）。它需要
+安装可选依赖组 `neuro`（见上文安装一节），从独立子包导入，并且必须先启动——
+交给编排器时由 `client.start()` 自动完成：
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+
+neuro = NeuroFilter(
+    NeuroFilterPolicy(
+        base_url="https://api.example.com/v1",
+        api_key="<your-api-key>",
+        model="<model-name>",
+        rules="Reject messages containing abuse or profanity.",
+    ),
+)
+client = Bitongue(config, handler=UpperHandler(), filters=[neuro])
+```
+
+三者的完整语义、配置项与边界行为（包括阈值调参直觉）
 见[核心概念](concepts.md)的「内置过滤器」一节。
 
 ## 下一步

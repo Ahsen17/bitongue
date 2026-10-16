@@ -35,11 +35,12 @@ Return `True` to release the message, `False` to reject it. Key points:
 
 ## Built-in filters
 
-Besides your own Protocol implementations, `bitongue.filter` ships two
+Besides your own Protocol implementations, `bitongue.filter` ships three
 ready-to-use filters. They share the same `True`/`False` contract but take
-opposite admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
-rejects), and `SparseFilter` is **duplicate interception** (similarity to the
-corpus rejects).
+different admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
+rejects), `SparseFilter` is **duplicate interception** (similarity to the
+corpus rejects), and `NeuroFilter` is **model judgment** (natural-language
+rules decided by a large language model).
 
 ### `KeywordsFilter` — keyword blocklist
 
@@ -93,6 +94,51 @@ binary query vector and searched against it:
   with `host=None`);
 - **Corpus chunking is the caller's responsibility**: each string is one
   searchable unit.
+
+### `NeuroFilter` — rule judgment by a large language model
+
+The filtering rules and the message text travel together to an
+OpenAI-compatible chat endpoint (via autogen's `AssistantAgent`
+internally), and the model returns a structured verdict against the
+rules:
+
+- **A rejecting verdict rejects**: the model answering `filtered=True` →
+  reject; a releasing verdict → release. Rules accept a single string or a
+  list of strings (a list is joined into one rule block with newlines);
+- **No model call, release**: messages without a text payload, or with
+  rules that normalize to nothing, are released outright — neither boundary
+  issues a model call;
+- **Every failure on the model path raises**: a response not matching the
+  verdict schema (`ValueError`), a backend error, or a single call exceeding
+  `timeout` (`TimeoutError`) all propagate unchanged — the filter swallows
+  nothing. Under the orchestrator, a timeout is caught by the existing
+  `handle_timeout` contract (that message is skipped silently); every other
+  error reaches the consumer;
+- **Isolation between messages**: every verdict runs in a fresh conversation
+  context that is cleared as soon as the verdict is read — one message's text
+  never enters another's request; a single instance is not safe for
+  concurrent calls (the orchestrator's single-consumer pipeline already
+  serializes them);
+- **Lifecycle**: construction only stores the configuration and contacts
+  nothing; `start()` builds the agent and the model client, and calling
+  `filter` before that raises `RuntimeError`. Unlike `SparseFilter`'s lazy
+  initialization, `NeuroFilter` must be started first — handing it to an
+  orchestrator covers this through `client.start()`;
+- **Configuration**: `NeuroFilterPolicy` (endpoint `base_url`, `api_key`,
+  model `model`, rules `rules`, per-verdict `timeout`); the customization
+  point for endpoint and model capability claims is `OpenAIClientProvider`.
+  Note that serializing the policy (`to_json`) carries the `api_key` along —
+  treat a serialized policy as secret material;
+- **Dependencies**: shipped as the optional `neuro` extra, imported from its
+  own subpackage:
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+```
+
+The verdict type is a pydantic model — a hard requirement of autogen's
+structured output, and the library's single deliberate exception to its
+"all data structures are msgspec" convention.
 
 The supporting tool `Normalizer` (text normalization) is usable on its own;
 `JiebaTokenizer` (Chinese search-mode segmentation) lives in the sparse

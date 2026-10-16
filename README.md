@@ -33,8 +33,9 @@ Bitongue 是一个异步消息流处理库：生产者把消息投入内存流�
   过期消息在消费时自动剔除，被拒绝或过期的消息不阻塞后续消费
 - **过滤器链准入**：消息进入处理前经过过滤器链，过滤器并发执行、全部通过才放行，
   被拒绝的消息静默丢弃
-- **内置过滤器**：关键词黑名单 `KeywordsFilter`（Aho-Corasick，归一化匹配）
-  与判重拦截 `SparseFilter`（qdrant 稀疏检索，语料相似即拒）；
+- **内置过滤器**：关键词黑名单 `KeywordsFilter`（Aho-Corasick，归一化匹配）、
+  判重拦截 `SparseFilter`（qdrant 稀疏检索，语料相似即拒）与模型判定
+  `NeuroFilter`（大语言模型按自然语言规则裁决）；
   实现 `FilterLifecycle` 的过滤器由编排器统一启动与关闭
 - **处理器扩展点**：实现一个异步 `handle(message) -> result` 方法即可接入业务逻辑，
   消息流转机制与业务处理解耦
@@ -44,7 +45,8 @@ Bitongue 是一个异步消息流处理库：生产者把消息投入内存流�
   泛型参数贯穿发送到结果的全流程
 - **分层依赖**：核心（流窗口、编排器、关键词过滤器）仅依赖 anyio、msgspec、
   pyahocorasick 等少量包；判重拦截 `SparseFilter` 的领域依赖（fastembed、jieba、
-  qdrant-client）随可选依赖组 `sparse` 按需安装
+  qdrant-client）随可选依赖组 `sparse` 按需安装；模型判定 `NeuroFilter` 的
+  领域依赖（autogen）随可选依赖组 `neuro` 按需安装
 
 ## 安装
 
@@ -67,6 +69,13 @@ uv add git+https://github.com/Ahsen17/bitongue.git
 
 ```bash
 uv add "bitongue[sparse]"
+```
+
+使用内置模型判定过滤器 `NeuroFilter` 时，还需安装可选依赖组 `neuro`
+（pip 用户写 `pip install "bitongue[neuro]"`）：
+
+```bash
+uv add "bitongue[neuro]"
 ```
 
 ## 快速上手

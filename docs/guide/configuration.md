@@ -90,3 +90,23 @@ config = BitongueConfig(
 非中文嵌入模型首次使用时从 HuggingFace 下载，可用 `Bm25Policy.cache_dir` 或
 环境变量 `FASTEMBED_CACHE_PATH` 控制缓存位置；`KeywordsFilter` 无网络行为，
 无需配置。
+
+## 过滤器配置（`NeuroFilter`）
+
+`NeuroFilter` 的行为由 `NeuroFilterPolicy` 一个结构体描述：
+
+| 字段 | 默认 | 语义 |
+|-|-|-|
+| `base_url` | 必填 | OpenAI 兼容对话端点的基地址 |
+| `api_key` | 必填 | 端点密钥；序列化 policy（`to_json`）会把它一并带出，序列化结果按机密信息对待 |
+| `model` | 必填 | 端点提供的模型名 |
+| `rules` | 必填 | 过滤规则；字符串列表按行拼接为一段规则文本，单个字符串原样使用；清洗后为空则所有消息放行 |
+| `timeout` | `10.0` | 单次模型判定的秒数上限；超时以 `TimeoutError` 抛出 |
+
+两层超时的分工：`timeout` 管单次模型调用本身，超出即抛错；整个过滤阶段仍计入
+`handle_timeout` 预算。给带 `NeuroFilter` 的管线配置时，`handle_timeout` 需要
+容纳模型调用的典型延迟。
+
+端点与模型的能力声明在 `OpenAIClientProvider` 中定制：客户端向 autogen 声明
+结构化输出等能力，模型才会按约定的 JSON 结构返回判定；后端模型实际不支持时，
+调用会在运行期失败——接入非标准后端时先在此处按真实能力声明。
