@@ -70,7 +70,7 @@ class KeywordsFilter[T: BaseMessage](BaseFilter):
 
     async def filter(self, message: "T") -> bool:
 
-        if not message.text or not self._keywords:
+        if message.type != "text" or not message.text or not self._keywords:
             return True
 
         return not any(
