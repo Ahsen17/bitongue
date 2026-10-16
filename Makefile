@@ -98,7 +98,7 @@ endif
 .PHONY: sync
 sync:					## Sync dependencies
 	@echo $(INFO) Syncing dependencies...
-	uv sync --dev
+	uv sync --dev --all-extras
 	@echo $(OK) Dependencies synced
 
 .PHONY: install
@@ -109,10 +109,10 @@ ifeq ($(IS_WINDOWS),1)
 	@echo $(OK) Virtual environment created
 	@if exist uv.lock ( \
 		echo $(INFO) uv.lock found, syncing in locked mode... && \
-		uv sync --dev --locked \
+		uv sync --dev --all-extras --locked \
 	) else ( \
 		echo $(INFO) uv.lock not found, syncing without lock... && \
-		uv sync --dev \
+		uv sync --dev --all-extras \
 	)
 else
 	@if uv venv -p 3.12; then \
@@ -123,10 +123,10 @@ else
 	fi
 	@if [ -f uv.lock ]; then \
 		echo "$(INFO) uv.lock found, syncing in locked mode... 🔒"; \
-		uv sync --dev --locked; \
+		uv sync --dev --all-extras --locked; \
 	else \
 		echo "$(INFO) uv.lock not found, syncing without lock... 🚀"; \
-		uv sync --dev; \
+		uv sync --dev --all-extras; \
 	fi
 endif
 	@echo $(OK) Installation complete

@@ -1,5 +1,7 @@
 """Tests for bitongue.filter.keywords."""
 
+from uuid import uuid4
+
 from tests.conftest import MakeMessage
 from tests.filter.conftest import MakeKeywordFile
 
@@ -27,7 +29,7 @@ class TestVerdict:
 
     async def test_empty_text_releases(self) -> None:
         sut: KeywordsFilter[BaseMessage] = KeywordsFilter(["违禁词"])
-        assert await sut.filter(BaseMessage(type="text", text=None)) is True
+        assert await sut.filter(BaseMessage(id=uuid4(), type="text", text=None)) is True
 
     async def test_empty_keyword_list_releases_all(
         self,

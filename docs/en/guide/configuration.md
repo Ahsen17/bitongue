@@ -21,7 +21,7 @@ config = BitongueConfig(
 |-|-|-|-|
 | `flowing_size` | `int` | messages | Capacity of the flowing window's bounded buffer; when full, `send()` waits, creating backpressure |
 | `flowing_timeout` | `int \| None` | seconds | How long a message may live in the window; entries older than this are dropped at consumption time; `None` means never expire |
-| `handle_timeout` | `float` | seconds | Maximum processing time allowed per message; timed-out messages are skipped (no result, consumption continues) |
+| `handle_timeout` | `float` | seconds | Maximum combined time allowed per message across filtering and handling; timed-out messages are skipped (no result, consumption continues) |
 | `handle_concurrency` | `int` | — | Handling concurrency; **in the current version this field is declared but not yet used by any scheduling logic — it is reserved**, and any value leaves behavior unchanged |
 
 ## Field behavior in detail
@@ -37,11 +37,11 @@ The capacity maps to the maximum buffer length of the anyio memory stream. A mes
 
 The lifetime clock starts when the message **enters the buffer** (`send()`), so time spent waiting counts. Expired entries are removed **on the consumer side**: no result, no error, and completely transparent to the producer. Set it to `None` to disable this timeout layer and let messages wait indefinitely for consumption.
 
-Division of labor between the two timeout layers: `flowing_timeout` governs "how long a message is worth processing at all", while `handle_timeout` governs "how long processing one message may take".
+Division of labor between the two timeout layers: `flowing_timeout` governs "how long a message is worth processing at all", while `handle_timeout` governs "how long one message may take through filtering and handling".
 
 ### `handle_timeout`
 
-Implemented with an anyio cancel scope: a timeout **actually cancels** the execution inside the handler (it does not merely stop waiting), then skips that message and continues with the next one. Cleanup logic inside the handler (`try/finally`, `async with`, and so on) runs normally.
+The timeout window covers both the **filtering and handling phases** of one message (the filter chain's total time counts against the budget). Implemented with an anyio cancel scope: a timeout **actually cancels** the execution inside filtering or handling (it does not merely stop waiting), then skips that message and continues with the next one. Cleanup logic inside the handler (`try/finally`, `async with`, and so on) runs normally.
 
 ### `handle_concurrency`
 
@@ -94,3 +94,27 @@ Non-Chinese embedding models are downloaded from HuggingFace on first use;
 place the cache with `Bm25Policy.cache_dir` or the `FASTEMBED_CACHE_PATH`
 environment variable. `KeywordsFilter` performs no network access and needs
 no configuration.
+
+## Filter configuration (`NeuroFilter`)
+
+`NeuroFilter` behavior is described by a single struct, `NeuroFilterPolicy`:
+
+| Field | Default | Meaning |
+|-|-|-|
+| `base_url` | required | Base URL of an OpenAI-compatible chat endpoint |
+| `api_key` | required | Endpoint key; serializing the policy (`to_json`) carries it along, so treat a serialized policy as secret material |
+| `model` | required | Model name served by the endpoint |
+| `rules` | required | Filtering rules; a list of strings is joined into one rule block with newlines, a single string is used verbatim; rules that normalize to nothing release every message |
+| `timeout` | `10.0` | Seconds allowed for one model verdict; a call that outlives it raises `TimeoutError` |
+
+Division of labor between the two timeout layers: `timeout` governs a single
+model call and raises once exceeded, while the whole filtering phase still
+counts against the `handle_timeout` budget — a pipeline with `NeuroFilter`
+needs a `handle_timeout` that accommodates the model call's typical latency.
+
+Endpoint and model capability claims are customized in
+`OpenAIClientProvider`: the client declares structured output and related
+capabilities to autogen, which is what makes the model answer with the agreed
+JSON verdict shape. A backend model that does not actually support them fails
+at call time — declare the real capabilities there when adapting to a
+non-standard backend.

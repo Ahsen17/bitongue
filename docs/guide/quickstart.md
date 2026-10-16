@@ -27,6 +27,20 @@ pip install bitongue
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
+内置的 `SparseFilter` 依赖 fastembed、jieba 与 qdrant-client，随可选依赖组
+`sparse` 发布，按需安装（pip 用户写 `pip install "bitongue[sparse]"`）：
+
+```bash
+uv add "bitongue[sparse]"
+```
+
+内置的 `NeuroFilter` 依赖 autogen 相关包，随可选依赖组 `neuro` 发布，按需安装
+（pip 用户写 `pip install "bitongue[neuro]"`）：
+
+```bash
+uv add "bitongue[neuro]"
+```
+
 ## 第一个示例
 
 围绕 Bitongue 的开发方式是「实现三个部件，交给编排器」：
@@ -39,6 +53,8 @@ uv add git+https://github.com/Ahsen17/bitongue.git
 完整可运行示例（保存为 `demo.py`）：
 
 ```python
+from uuid import uuid4
+
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
@@ -64,21 +80,22 @@ class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
     """处理器：把文本转成大写。"""
 
     async def handle(self, message: BaseMessage) -> UpperResult:
-        return UpperResult(text=(message.text or "").upper())
+        return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
 async def main() -> None:
     config = BitongueConfig(
         flowing_size=16,       # 流窗口容量（有界缓冲大小）
         flowing_timeout=30,    # 消息在窗口内的存活秒数
-        handle_timeout=5.0,    # 单条消息的处理超时秒数
+        handle_timeout=5.0,    # 单条消息过滤+处理的超时秒数
         handle_concurrency=1,  # 处理并发（预留字段）
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 
     await client.start()
-    await client.send(BaseMessage(type="text", text="hello bitongue"))
-    await client.send(BaseMessage(type="text", text=""))  # 会被过滤器丢弃
+    # id 由业务侧生成后透传；真实场景通常用业务系统已有的标识
+    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
+    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # 会被过滤器丢弃
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE
@@ -107,7 +124,7 @@ HELLO BITONGUE
 
 1. `client.send(...)` 把消息包成带入库时间与超时标记的条目，投入流窗口的有界缓冲；空文本消息同样入库。
 2. `client.result()` 按入库顺序逐条消费：先剔除在窗口内停留超过 `flowing_timeout` 的过期消息；本例中空文本消息被 `NonEmptyFilter` 拒绝，静默丢弃，不产出结果。
-3. 通过过滤的消息交给 `UpperHandler.handle` 处理，处理必须在 `handle_timeout` 秒内完成，产出 `UpperResult`。
+3. 通过过滤的消息交给 `UpperHandler.handle` 处理，过滤与处理两段合计须在 `handle_timeout` 秒内完成，产出 `UpperResult`（结果镜像了来源消息的 `id`）。
 4. `result()` 逐条 yield 处理结果；示例取到第一条即结束。
 
 ## 使用内置过滤器
@@ -126,8 +143,34 @@ client = Bitongue(
 ```
 
 另一个内置过滤器 `SparseFilter` 基于 qdrant 稀疏检索做判重拦截：给定参考语料，
-与语料相似的消息被拒绝、无关消息放行，适合近重复内容准入。两者的完整语义、
-配置项与边界行为（包括阈值调参直觉）见[核心概念](concepts.md)的「内置过滤器」一节。
+与语料相似的消息被拒绝、无关消息放行，适合近重复内容准入；它需要安装可选依赖组
+`sparse`（见上文安装一节），并从 sparse 子包导入：
+
+```python
+from bitongue.filter.sparse import SparseFilter
+```
+
+第三个内置过滤器 `NeuroFilter` 把自然语言规则与消息文本一起交给大语言模型
+裁决，适合关键词难以穷举的语义类准入（例如「拒绝带攻击性的内容」）。它需要
+安装可选依赖组 `neuro`（见上文安装一节），从独立子包导入，并且必须先启动——
+交给编排器时由 `client.start()` 自动完成：
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+
+neuro = NeuroFilter(
+    NeuroFilterPolicy(
+        base_url="https://api.example.com/v1",
+        api_key="<your-api-key>",
+        model="<model-name>",
+        rules="Reject messages containing abuse or profanity.",
+    ),
+)
+client = Bitongue(config, handler=UpperHandler(), filters=[neuro])
+```
+
+三者的完整语义、配置项与边界行为（包括阈值调参直觉）
+见[核心概念](concepts.md)的「内置过滤器」一节。
 
 ## 下一步
 

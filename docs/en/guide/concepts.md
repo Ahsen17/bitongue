@@ -4,7 +4,7 @@ Bitongue splits message handling into five independent, single-purpose concepts.
 
 ## Messages and entries (`BaseMessage` / `MessageEntry`)
 
-`BaseMessage` is the message base class (itself a subclass of `BaseStruct`, the msgspec struct wrapper shared by all data structures). It currently defines the fields of a text message: `type` (fixed to `"text"`) and `text` (optional text content). The inherited `BaseStruct` provides `to_dict` / `from_dict` / `to_json` / `from_json`, so every message converts between dicts, JSON, and objects out of the box.
+`BaseMessage` is the message base class (itself a subclass of `BaseStruct`, the msgspec struct wrapper shared by all data structures). It currently defines the fields of a text message: `id` (a caller-supplied unique identifier — bitongue never generates one; pass through the business-side ID you already have), `type` (fixed to `"text"`), and `text` (optional text content). The inherited `BaseStruct` provides `to_dict` / `from_dict` / `to_json` / `from_json`, so every message converts between dicts, JSON, and objects out of the box.
 
 A message does not enter the buffer directly when sent; it is first wrapped into a `MessageEntry` that, besides the message itself, records `enter_time` (the moment of entry) and `timeout` (the lifetime in seconds) for the flowing window's expiry checks.
 
@@ -30,16 +30,17 @@ async def filter(self, message: T) -> bool:
 Return `True` to release the message, `False` to reject it. Key points:
 
 - A message proceeds to handling only when **every filter in the chain returns `True`**; a single `False` drops the message silently.
-- The filter chain **does not short-circuit**: even if the first filter already rejected the message, the remaining filters still run. Filters should therefore be read-only, side-effect-free predicates.
+- Filters **run concurrently**: the chain starts them together in a task group — none waits for another, and all of them execute (no short-circuit). Filters should therefore be read-only, side-effect-free predicates, and must not assume any ordering among themselves.
 - With no filters configured, every message passes.
 
 ## Built-in filters
 
-Besides your own Protocol implementations, `bitongue.filter` ships two
+Besides your own Protocol implementations, `bitongue.filter` ships three
 ready-to-use filters. They share the same `True`/`False` contract but take
-opposite admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
-rejects), and `SparseFilter` is **duplicate interception** (similarity to the
-corpus rejects).
+different admissions: `KeywordsFilter` is a **keyword blocklist** (a hit
+rejects), `SparseFilter` is **duplicate interception** (similarity to the
+corpus rejects), and `NeuroFilter` is **model judgment** (natural-language
+rules decided by a large language model).
 
 ### `KeywordsFilter` — keyword blocklist
 
@@ -94,8 +95,55 @@ binary query vector and searched against it:
 - **Corpus chunking is the caller's responsibility**: each string is one
   searchable unit.
 
-The supporting tools `Normalizer` (text normalization) and `JiebaTokenizer`
-(Chinese search-mode segmentation) are also usable on their own.
+### `NeuroFilter` — rule judgment by a large language model
+
+The filtering rules and the message text travel together to an
+OpenAI-compatible chat endpoint (via autogen's `AssistantAgent`
+internally), and the model returns a structured verdict against the
+rules:
+
+- **A rejecting verdict rejects**: the model answering `filtered=True` →
+  reject; a releasing verdict → release. Rules accept a single string or a
+  list of strings (a list is joined into one rule block with newlines);
+- **No model call, release**: messages without a text payload, or with
+  rules that normalize to nothing, are released outright — neither boundary
+  issues a model call;
+- **Every failure on the model path raises**: a response not matching the
+  verdict schema (`ValueError`), a backend error, or a single call exceeding
+  `timeout` (`TimeoutError`) all propagate unchanged — the filter swallows
+  nothing. Under the orchestrator, a timeout is caught by the existing
+  `handle_timeout` contract (that message is skipped silently); every other
+  error reaches the consumer;
+- **Isolation between messages**: every verdict runs in a fresh conversation
+  context that is cleared as soon as the verdict is read — one message's text
+  never enters another's request; a single instance is not safe for
+  concurrent calls (the orchestrator's single-consumer pipeline already
+  serializes them);
+- **Lifecycle**: construction only stores the configuration and contacts
+  nothing; `start()` builds the agent and the model client, and calling
+  `filter` before that raises `RuntimeError`. Unlike `SparseFilter`'s lazy
+  initialization, `NeuroFilter` must be started first — handing it to an
+  orchestrator covers this through `client.start()`;
+- **Configuration**: `NeuroFilterPolicy` (endpoint `base_url`, `api_key`,
+  model `model`, rules `rules`, per-verdict `timeout`); the customization
+  point for endpoint and model capability claims is `OpenAIClientProvider`.
+  Note that serializing the policy (`to_json`) carries the `api_key` along —
+  treat a serialized policy as secret material;
+- **Dependencies**: shipped as the optional `neuro` extra, imported from its
+  own subpackage:
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+```
+
+The verdict type is a pydantic model — a hard requirement of autogen's
+structured output, and the library's single deliberate exception to its
+"all data structures are msgspec" convention.
+
+The supporting tool `Normalizer` (text normalization) is usable on its own;
+`JiebaTokenizer` (Chinese search-mode segmentation) lives in the sparse
+subpackage (`bitongue.filter.sparse`) alongside `SparseFilter` and requires
+the optional `sparse` extra.
 
 ## Handlers and results (`BaseHandler` / `BaseResult`)
 
@@ -105,18 +153,18 @@ The supporting tools `Normalizer` (text normalization) and `JiebaTokenizer`
 async def handle(self, message: T) -> R:
 ```
 
-`R` must be a subclass of `BaseResult` — results are msgspec structs just like messages, with the same serialization abilities. Declaring the result type as a generic parameter (`BaseHandler[BaseMessage, UpperResult]`) gives you type checking across the whole path from send to result.
+`R` must be a subclass of `BaseResult` — results are msgspec structs just like messages, with the same serialization abilities; the base class already carries an `id` field (same convention as `BaseMessage.id`: a business-side identifier supplied by the caller, conventionally mirrored from the source message), and the subclass declares the remaining fields the handler yields. Declaring the result type as a generic parameter (`BaseHandler[BaseMessage, UpperResult]`) gives you type checking across the whole path from send to result.
 
-Any exception a handler raises is wrapped into `MessageHandleError` and propagates to the consumer; if handling exceeds the configured `handle_timeout`, that message is skipped (no result is produced, and consumption continues).
+Any exception a handler raises is wrapped into `MessageHandleError` and propagates to the consumer; if the combined time a message spends in filtering and handling exceeds the configured `handle_timeout`, that message is skipped (no result is produced, and consumption continues).
 
 ## The orchestrator (`Bitongue` / `BitongueConfig`)
 
 `Bitongue[T, R]` assembles the parts above into one pipeline:
 
 - **Construction**: takes a `BitongueConfig`, a handler (required), and an optional collection of filters;
-- **Lifecycle**: `start()` creates and starts the flowing window internally; `shutdown()` closes it in reverse order;
+- **Lifecycle**: `start()` creates and starts the flowing window internally; `shutdown()` closes it in reverse order; both are idempotent — calling `start()` on a running client or `shutdown()` on a stopped client does nothing — and the `running` property reports the current state;
 - **Production side**: `send(message)` submits a message, wrapping and timing it internally;
-- **Consumption side**: `result()` is an async generator that runs "expiry removal → filter chain → handler" in order and yields results one at a time.
+- **Consumption side**: `result()` is an async generator that runs "expiry removal → filter chain → handler" in order (filters inside the chain run concurrently; `handle_timeout` covers both the filtering and handling phases) and yields results one at a time.
 
 Two boundary behaviors to note: calling `send()` or `result()` before `start()` raises a `RuntimeError`, and `result()` should be iterated by exactly one consumer at a time (the underlying buffer is a single-consumer memory stream).
 

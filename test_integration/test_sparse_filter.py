@@ -15,7 +15,7 @@ import pytest
 from qdrant_client import AsyncQdrantClient
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter import QdrantPolicy, SparseFilter
+from bitongue.filter.sparse import QdrantPolicy, SparseFilter
 from bitongue.flow import BaseMessage
 from test_integration.conftest import (
     CollectResults,
@@ -165,8 +165,12 @@ class TestClientAssembly:
 
         # The released message must share zero tokens with the corpus: even a
         # single overlapping token can score above the default threshold.
-        await client.send(BaseMessage(type="text", text="端到端违规文案 变体"))
-        await client.send(BaseMessage(type="text", text="totally different subject"))
+        await client.send(
+            BaseMessage(id=uuid4(), type="text", text="端到端违规文案 变体")
+        )
+        await client.send(
+            BaseMessage(id=uuid4(), type="text", text="totally different subject")
+        )
 
         results = await collect_results(client, count=1)
         await client.shutdown()

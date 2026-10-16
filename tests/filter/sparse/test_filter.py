@@ -13,7 +13,7 @@ from tests.conftest import MakeMessage
 from tests.filter.sparse.conftest import MakeSparseFilter
 
 from bitongue.client import Bitongue, BitongueConfig
-from bitongue.filter import Bm25Policy, QdrantPolicy, SparseFilter
+from bitongue.filter.sparse import Bm25Policy, QdrantPolicy, SparseFilter
 from bitongue.flow import BaseMessage
 from bitongue.handler import BaseHandler, BaseResult
 
@@ -24,7 +24,7 @@ class _EchoResult(BaseResult):
 
 class _EchoHandler(BaseHandler[BaseMessage, _EchoResult]):
     async def handle(self, message: BaseMessage) -> _EchoResult:
-        return _EchoResult(content=message.text or "")
+        return _EchoResult(id=message.id, content=message.text or "")
 
 
 class TestConstruction:
@@ -184,7 +184,7 @@ class TestVerdict:
         make_sparse_filter: MakeSparseFilter,
     ) -> None:
         sut = make_sparse_filter(["文档一"])
-        assert await sut.filter(BaseMessage(type="text", text=None)) is True
+        assert await sut.filter(BaseMessage(id=uuid4(), type="text", text=None)) is True
         assert sut.running is False  # Empty text short-circuits before lazy init.
 
     async def test_punctuation_only_text_released(

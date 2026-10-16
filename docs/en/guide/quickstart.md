@@ -27,6 +27,22 @@ If the package is not yet published to PyPI, install it from source:
 uv add git+https://github.com/Ahsen17/bitongue.git
 ```
 
+The built-in `SparseFilter` depends on fastembed, jieba, and qdrant-client,
+published as the optional `sparse` extra; install it if you need that filter
+(pip users write `pip install "bitongue[sparse]"`):
+
+```bash
+uv add "bitongue[sparse]"
+```
+
+The built-in `NeuroFilter` depends on the autogen packages, published as the
+optional `neuro` extra; install it if you need that filter (pip users write
+`pip install "bitongue[neuro]"`):
+
+```bash
+uv add "bitongue[neuro]"
+```
+
 ## Your first example
 
 Developing with Bitongue means "implement three parts and hand them to an orchestrator":
@@ -39,6 +55,8 @@ Developing with Bitongue means "implement three parts and hand them to an orches
 The complete runnable example (save as `demo.py`):
 
 ```python
+from uuid import uuid4
+
 import anyio
 
 from bitongue.client import Bitongue, BitongueConfig
@@ -64,21 +82,23 @@ class UpperHandler(BaseHandler[BaseMessage, UpperResult]):
     """A handler that uppercases the text."""
 
     async def handle(self, message: BaseMessage) -> UpperResult:
-        return UpperResult(text=(message.text or "").upper())
+        return UpperResult(id=message.id, text=(message.text or "").upper())
 
 
 async def main() -> None:
     config = BitongueConfig(
         flowing_size=16,       # flowing window capacity (bounded buffer size)
         flowing_timeout=30,    # seconds a message stays alive in the window
-        handle_timeout=5.0,    # per-message handling timeout in seconds
+        handle_timeout=5.0,    # per-message filtering+handling timeout in seconds
         handle_concurrency=1,  # handling concurrency (reserved field)
     )
     client = Bitongue(config, handler=UpperHandler(), filters=[NonEmptyFilter()])
 
     await client.start()
-    await client.send(BaseMessage(type="text", text="hello bitongue"))
-    await client.send(BaseMessage(type="text", text=""))  # dropped by the filter
+    # The id is generated on the business side and passed through; real
+    # applications typically reuse an identifier they already have.
+    await client.send(BaseMessage(id=uuid4(), type="text", text="hello bitongue"))
+    await client.send(BaseMessage(id=uuid4(), type="text", text=""))  # dropped by the filter
 
     async for result in client.result():
         print(result.text)  # HELLO BITONGUE
@@ -107,7 +127,7 @@ HELLO BITONGUE
 
 1. `client.send(...)` wrapped each message into an entry that records its entry time and timeout, then put it into the flowing window's bounded buffer; the empty-text message entered the buffer too.
 2. `client.result()` consumes entries in send order: messages that stayed in the window longer than `flowing_timeout` are dropped as expired; here the empty-text message is rejected by `NonEmptyFilter` and dropped silently, producing no result.
-3. The message that passed the filter is handed to `UpperHandler.handle`, which must finish within `handle_timeout` seconds and produces an `UpperResult`.
+3. The message that passed the filter is handed to `UpperHandler.handle`; the combined filtering and handling must finish within `handle_timeout` seconds and produces an `UpperResult` (the result mirrors the source message's `id`).
 4. `result()` yields the results one by one; the example stops at the first one.
 
 ## Using the built-in filters
@@ -129,9 +149,38 @@ client = Bitongue(
 The other built-in filter, `SparseFilter`, intercepts near-duplicates via
 qdrant sparse retrieval: given a reference corpus, messages similar to it are
 rejected while unrelated ones pass — a good fit for duplicate-content
-admission. For the full semantics, configuration, and boundary behavior of
-both (including how to think about the threshold), see the "Built-in filters"
-section of [Core concepts](concepts.md).
+admission. It requires the optional `sparse` extra (see the installation
+section above) and is imported from the sparse subpackage:
+
+```python
+from bitongue.filter.sparse import SparseFilter
+```
+
+The third built-in filter, `NeuroFilter`, hands natural-language rules and
+the message text to a large language model for judgment — a good fit for
+semantic admission that keywords cannot enumerate (for example, "reject
+abusive content"). It requires the optional `neuro` extra (see the
+installation section above), is imported from its own subpackage, and must
+be started first — handing it to an orchestrator covers this through
+`client.start()`:
+
+```python
+from bitongue.filter.neuro import NeuroFilter, NeuroFilterPolicy
+
+neuro = NeuroFilter(
+    NeuroFilterPolicy(
+        base_url="https://api.example.com/v1",
+        api_key="<your-api-key>",
+        model="<model-name>",
+        rules="Reject messages containing abuse or profanity.",
+    ),
+)
+client = Bitongue(config, handler=UpperHandler(), filters=[neuro])
+```
+
+For the full semantics, configuration, and boundary behavior
+of all three (including how to think about the threshold), see the "Built-in
+filters" section of [Core concepts](concepts.md).
 
 ## Next steps
 

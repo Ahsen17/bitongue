@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from bitongue.base import SerializationError
-from bitongue.filter import Bm25Policy, QdrantPolicy
+from bitongue.filter.sparse import Bm25Policy, QdrantPolicy
 
 
 class TestBm25Policy:

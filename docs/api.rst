@@ -13,10 +13,10 @@ bitongue.base.exceptions
 .. automodule:: bitongue.base.exceptions
    :members:
 
-bitongue.flow.schemas
+bitongue.flow.message
 ---------------------
 
-.. automodule:: bitongue.flow.schemas
+.. automodule:: bitongue.flow.message
    :members:
 
 bitongue.flow.flowing
@@ -68,16 +68,34 @@ bitongue.filter.sparse.stemmer
 .. automodule:: bitongue.filter.sparse.stemmer
    :members:
 
+bitongue.filter.sparse.tokenizer
+--------------------------------
+
+.. automodule:: bitongue.filter.sparse.tokenizer
+   :members:
+
+bitongue.filter.neuro.filter
+----------------------------
+
+.. automodule:: bitongue.filter.neuro.filter
+   :members:
+
+bitongue.filter.neuro.policy
+----------------------------
+
+.. automodule:: bitongue.filter.neuro.policy
+   :members:
+
+bitongue.filter.neuro.provider
+------------------------------
+
+.. automodule:: bitongue.filter.neuro.provider
+   :members:
+
 bitongue.filter.utils.normalizer
 --------------------------------
 
 .. automodule:: bitongue.filter.utils.normalizer
-   :members:
-
-bitongue.filter.utils.tokenizer
--------------------------------
-
-.. automodule:: bitongue.filter.utils.tokenizer
    :members:
 
 bitongue.handler.protocols
@@ -86,10 +104,10 @@ bitongue.handler.protocols
 .. automodule:: bitongue.handler.protocols
    :members:
 
-bitongue.handler.schemas
-------------------------
+bitongue.handler.result
+-----------------------
 
-.. automodule:: bitongue.handler.schemas
+.. automodule:: bitongue.handler.result
    :members:
 
 bitongue.client.config

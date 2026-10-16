@@ -2,7 +2,7 @@ from typing import cast
 
 import jieba  # type: ignore[import-untyped]
 
-from .normalizer import Normalizer
+from bitongue.filter.utils.normalizer import Normalizer
 
 __all__ = ("JiebaTokenizer",)
 

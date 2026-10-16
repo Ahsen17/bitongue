@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from bitongue.flow import BaseMessage
 
-    from .schemas import BaseResult
+    from .result import BaseResult
 
 
 __all__ = ("BaseHandler",)

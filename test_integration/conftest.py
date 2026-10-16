@@ -1,6 +1,7 @@
 """Fixtures and test doubles for the integration test tree."""
 
 from collections.abc import Awaitable, Callable, Collection, Sequence
+from uuid import uuid4
 
 import anyio
 import pytest
@@ -55,7 +56,7 @@ class ScriptedHandler:
             await anyio.sleep(delay)
         if self.error is not None:
             raise self.error
-        return EchoResult(content=message.text or "")
+        return EchoResult(id=message.id, content=message.text or "")
 
 
 def _build_client(
@@ -107,7 +108,7 @@ def make_message() -> MakeMessage:
     """Factory fixture for minimal text messages."""
 
     def _make(text: str = "hello") -> BaseMessage:
-        return BaseMessage(type="text", text=text)
+        return BaseMessage(id=uuid4(), type="text", text=text)
 
     return _make
 

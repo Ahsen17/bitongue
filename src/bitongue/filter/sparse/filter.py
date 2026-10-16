@@ -218,7 +218,8 @@ class SparseFilter[T: BaseMessage](BaseFilter, FilterLifecycle):
             payload.
         """
 
-        if not message.text:
+        if message.type != "text" or not message.text:
+            # Not a text message or no text payload. Release it.
             return True
 
         embedding, qdrant = await self._ensure_runtime()

@@ -21,7 +21,7 @@ config = BitongueConfig(
 |-|-|-|-|
 | `flowing_size` | `int` | 条 | 流窗口的有界缓冲容量；窗口满时 `send()` 等待，形成背压 |
 | `flowing_timeout` | `int \| None` | 秒 | 消息在窗口内的存活时间；消费时剔除入库后超时的条目；`None` 表示永不过期 |
-| `handle_timeout` | `float` | 秒 | 单条消息允许的最大处理耗时；超时消息被跳过（不产出结果，不中断消费） |
+| `handle_timeout` | `float` | 秒 | 单条消息过滤与处理两段合计允许的最大耗时；超时消息被跳过（不产出结果，不中断消费） |
 | `handle_concurrency` | `int` | — | 处理并发配置；**当前版本该字段已定义但尚未参与调度逻辑，属预留字段**，写入任意值不改变行为 |
 
 ## 各字段的行为细节
@@ -37,11 +37,11 @@ config = BitongueConfig(
 
 存活计时从消息**入库**（`send()`）时刻开始，等待缓冲的时间也计入。过期条目在**消费侧**被剔除：不产出结果、不报错，对生产者完全透明。设为 `None` 可关闭该层超时，让消息无限期等待消费。
 
-两层超时的分工：`flowing_timeout` 管「消息值得被处理多久」，`handle_timeout` 管「处理一条消息最多花多久」。
+两层超时的分工：`flowing_timeout` 管「消息值得被处理多久」，`handle_timeout` 管「单条消息走完过滤与处理最多花多久」。
 
 ### `handle_timeout`
 
-以 anyio 取消作用域实现：超时会**真正取消**处理器内的执行（而不仅是放弃等待），随后该消息被跳过，消费继续下一条。处理器内部的清理逻辑（`try/finally`、`async with` 等）会正常执行。
+超时窗口覆盖单条消息的**过滤与处理两段**（过滤器链的总耗时计入预算）。以 anyio 取消作用域实现：超时会**真正取消**过滤或处理内的执行（而不仅是放弃等待），随后该消息被跳过，消费继续下一条。处理器内部的清理逻辑（`try/finally`、`async with` 等）会正常执行。
 
 ### `handle_concurrency`
 
@@ -90,3 +90,23 @@ config = BitongueConfig(
 非中文嵌入模型首次使用时从 HuggingFace 下载，可用 `Bm25Policy.cache_dir` 或
 环境变量 `FASTEMBED_CACHE_PATH` 控制缓存位置；`KeywordsFilter` 无网络行为，
 无需配置。
+
+## 过滤器配置（`NeuroFilter`）
+
+`NeuroFilter` 的行为由 `NeuroFilterPolicy` 一个结构体描述：
+
+| 字段 | 默认 | 语义 |
+|-|-|-|
+| `base_url` | 必填 | OpenAI 兼容对话端点的基地址 |
+| `api_key` | 必填 | 端点密钥；序列化 policy（`to_json`）会把它一并带出，序列化结果按机密信息对待 |
+| `model` | 必填 | 端点提供的模型名 |
+| `rules` | 必填 | 过滤规则；字符串列表按行拼接为一段规则文本，单个字符串原样使用；清洗后为空则所有消息放行 |
+| `timeout` | `10.0` | 单次模型判定的秒数上限；超时以 `TimeoutError` 抛出 |
+
+两层超时的分工：`timeout` 管单次模型调用本身，超出即抛错；整个过滤阶段仍计入
+`handle_timeout` 预算。给带 `NeuroFilter` 的管线配置时，`handle_timeout` 需要
+容纳模型调用的典型延迟。
+
+端点与模型的能力声明在 `OpenAIClientProvider` 中定制：客户端向 autogen 声明
+结构化输出等能力，模型才会按约定的 JSON 结构返回判定；后端模型实际不支持时，
+调用会在运行期失败——接入非标准后端时先在此处按真实能力声明。

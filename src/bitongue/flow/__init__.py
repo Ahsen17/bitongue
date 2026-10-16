@@ -4,7 +4,7 @@ from .exceptions import (
     HandlerNotFoundError,
 )
 from .flowing import Flowing
-from .schemas import BaseMessage, MessageEntry
+from .message import BaseMessage, MessageEntry
 
 __all__ = (
     "BaseMessage",

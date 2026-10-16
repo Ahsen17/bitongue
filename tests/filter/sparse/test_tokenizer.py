@@ -3,7 +3,7 @@
 Kept in a dedicated file because jieba's first dictionary load is slow.
 """
 
-from bitongue.filter import JiebaTokenizer
+from bitongue.filter.sparse import JiebaTokenizer
 
 
 class TestTokenize:

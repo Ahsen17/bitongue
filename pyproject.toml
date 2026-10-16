@@ -8,13 +8,23 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "aioresult",
     "anyio",
-    "fastembed",
-    "jieba",
     "msgspec",
     "pyahocorasick",
-    "qdrant-client",
     "uuid-utils",
+]
+
+[project.optional-dependencies]
+sparse = [
+    "fastembed",
+    "jieba",
+    "qdrant-client",
+]
+neuro = [
+    "autogen-agentchat",
+    "autogen-core",
+    "autogen-ext[openai]",
 ]
 
 [project.urls]
